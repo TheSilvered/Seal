@@ -3,86 +3,158 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #define SlObjIsNumeric(type) (((type) >> 1) == 0x1)
 #define SlObjIsSequence(type) (((type) >> 2) == 0x1)
 
+typedef struct SlObj SlObj;
+
 typedef enum SlObjType {
-    SlObj_Null      = 0b0000,
-    SlObj_Bool      = 0b0001,
-    SlObj_Int       = 0b0010,
-    SlObj_Float     = 0b0011,
-    SlObj_Tuple     = 0b0100,
-    SlObj_List      = 0b0101,
-    SlObj_Bytesview = 0b0110,
-    SlObj_Bytes     = 0b0111,
-    SlObj_Char      = 0b1000,
-    SlObj_Str       = 0b1001,
-    SlObj_Strview   = 0b1010,
-    SlObj_Struct    = 0b1011,
-    SlObj_Function  = 0b1100,
-    SlObj_Map       = 0b1101,
-    SlObj_Foreign   = 0b1110,
+    SlObj_Null      = 0b00000000,
+    SlObj_Bool      = 0b00000001,
+    SlObj_Int       = 0b00000010,
+    SlObj_Float     = 0b00000011,
+    SlObj_Tuple     = 0b00000100,
+    SlObj_List      = 0b00000101,
+    SlObj_Bytesview = 0b00000110,
+    SlObj_Bytes     = 0b00000111,
+    SlObj_Char      = 0b00001000,
+    SlObj_Str       = 0b00001001,
+    SlObj_Strview   = 0b00001010,
+    SlObj_Struct    = 0b00001011,
+    SlObj_Func      = 0b00001100,
+    SlObj_Map       = 0b00001101,
+    SlObj_Iter      = 0b00001110,
+    SlObj_Foreign   = 0b00001111
 } SlObjType;
 
+typedef struct SlTuple SlTuple;
+typedef struct SlList SlList;
+typedef struct SlBytesview SlBytesview;
+typedef struct SlBytes SlBytes;
+typedef struct SlStr SlStr;
+typedef struct SlStrview SlStrview;
+typedef struct SlStruct SlStruct;
+typedef struct SlMap SlMap;
+typedef struct SlFunc SlFunc;
+typedef struct SlIter SlIter;
+typedef struct SlForeign SlForeign;
+
 typedef struct SlObj {
-    uint16_t flags;
-    uint16_t type;
-    size_t refCount;
+    SlObjType type;
+    union {
+        const bool         Bool;
+        const uint64_t     Int;
+        const double       Float;
+        const uint32_t     Char;
+        const SlTuple     *Tuple;
+        const SlList      *List;
+        const SlBytesview *Bytesview;
+        const SlBytes     *Bytes;
+        const SlStr       *Str;
+        const SlStrview   *Strview;
+        const SlStruct    *Struct;
+        const SlMap       *Map;
+        const SlFunc      *Func;
+        const SlIter      *Iter;
+        const SlForeign   *Foreign;
+    } as;
 } SlObj;
 
-typedef struct SlInt {
-    SlObj obj;
-    const int64_t value;
-} SlInt;
+typedef struct SlGCObj {
+    size_t refCount;
+} SlGCObj;
 
-typedef struct SlFloat {
-    SlObj obj;
-    const double value;
-} SlFloat;
-
-typedef struct SlTuple {
-    SlObj obj;
-    const SlObj *const *const objs;
-    const size_t len;
-    const bool owned;
-} SlTuple;
-
-// typedef struct SlStruct
-// typedef struct SlFunction
-
-typedef struct SlStrview {
-    SlObj obj;
-    bool owned;
-    uint8_t *str;
-    size_t len;
-} SlStrview;
-
-typedef struct SlBytesview {
-    SlObj obj;
-    bool owned;
-    uint8_t *bytes;
-    size_t len;
-} SlBytesview;
-
-typedef struct SlStr {
-    SlObj obj;
-    uint8_t *str;
+struct SlList {
+    SlGCObj asGCObj;
+    SlObj *objs;
     size_t len, cap;
-} SlStr;
+};
 
-typedef struct SlBytes {
-    SlObj obj;
+struct SlTuple {
+    SlGCObj asGCObj;
+    union {
+        SlObj *objs;
+        size_t idx;
+    } data;
+    size_t len;
+    SlList *ref;
+};
+
+struct SlBytes {
+    SlGCObj asGCObj;
     uint8_t *bytes;
     size_t len, cap;
-} SlBytes;
+};
 
-typedef struct SlList {
-    SlObj obj;
-    SlObj **objs;
+struct SlBytesview {
+    SlGCObj asGCObj;
+    union {
+        uint8_t *bytes;
+        size_t idx;
+    } data;
+    size_t len;
+    SlBytes *ref;
+};
+
+struct SlStr {
+    SlGCObj asGCObj;
+    uint8_t *chars;
     size_t len, cap;
-} SlList;
+};
 
-// typedef struct SlMap
+struct SlStrview {
+    SlGCObj asGCObj;
+    union {
+        uint8_t *chars;
+        size_t idx;
+    } data;
+    size_t len;
+    SlStr *ref;
+};
+
+typedef struct SlMapEntry {
+    SlObj key, value;
+} SlMapEntry;
+
+struct SlStruct {
+    SlGCObj asGCObj;
+    SlMapEntry entries;
+    size_t len, cap;
+};
+
+struct SlMap {
+    SlGCObj asGCObj;
+    SlMapEntry entries;
+    size_t len, cap;
+};
+
+struct SlFunc {
+    SlGCObj asGCObj;
+    // TODO: function object fields
+};
+
+typedef bool (*SlIterNext)(SlIter *iter, SlObj *next);
+
+struct SlIter {
+    SlGCObj asGCObj;
+    SlIterNext *nextFn;
+    void *data;
+};
+
+struct SlForeign {
+    SlGCObj asGCObj;
+    // TODO: foreign object fields + foreign types
+};
+
+// Get an Int object
+SlObj slObjInt(uint64_t value);
+// Get a Float object
+SlObj slObjFloat(double value);
+// Get a Bool object
+SlObj slObjBool(bool value);
+// Get a Char object
+SlObj slObjChar(int32_t value);
 
 #endif // !SL_OBJECT_H_

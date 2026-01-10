@@ -12,12 +12,11 @@ These objects are immutable:
 - `Int` (64 bit)
 - `Float` (double precision)
 - `Bool`
-- `Tuple`
+- `Tuple` (can be a non-owning view into a list)
 - `Struct` (named tuple)
 - `Strview` (can own the memory)
-- `Char`
+- `Char` (Unicode character)
 - `Bytesview` (can own the memory)
-- `Arrview` (view into a list or a tuple)
 - `Function`
 
 These are mutable:
@@ -27,6 +26,7 @@ These are mutable:
 - `List` (dynamic array)
 - `Map` (hash-map)
 - `Foreign` (user-defined object)
+- `Iter`
 
 # Syntax
 
