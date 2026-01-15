@@ -6,8 +6,11 @@
 typedef struct SlVM {
     struct {
         bool occurred;
-        char *msg;
+        char msg[512];
     } error;
 } SlVM;
+
+void slSetOutOfMemoryError(SlVM *vm);
+void slSetError(SlVM *vm, const char *fmt, ...);
 
 #endif // !SL_VM_H_

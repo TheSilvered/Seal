@@ -2,16 +2,14 @@
 #define SL_LEXER_H_
 
 #include <stdint.h>
+#include <stddef.h>
 
 #include "sl_vm.h"
 
 typedef enum SlTokenKind {
     SlToken_Ident,
     SlToken_Int,
-    SlToken_Add,
-
-    // Keywords
-    SlToken_KVar
+    SlToken_Add
 } SlTokenKind;
 
 typedef struct SlToken {
@@ -20,9 +18,9 @@ typedef struct SlToken {
     union {
         struct {
             uint8_t *value;
-            size_t len;
-        } Ident, Str;
-        int64_t Int;
+            uint32_t len;
+        } ident, str;
+        int64_t intLiteral;
     } as;
 } SlToken;
 

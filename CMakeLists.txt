@@ -9,7 +9,16 @@ endif()
 include_directories(seal include)
 add_library(seal
     src/sl_object.c
+    src/sl_vm.c
+    src/clib_mem.c
+    src/sl_lexer.c
 )
+
+add_executable(test
+    "test/main.c"
+)
+
+target_link_libraries(test seal)
 
 if(${CMAKE_GENERATOR} MATCHES ".*(Make|Ninja).*")
     add_custom_command(
@@ -17,4 +26,3 @@ if(${CMAKE_GENERATOR} MATCHES ".*(Make|Ninja).*")
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/compile_commands.json ${CMAKE_SOURCE_DIR}/compile_commands.json
     )
 endif()
-
