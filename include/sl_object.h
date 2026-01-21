@@ -83,24 +83,24 @@ struct SlStruct {
     uint64_t value;
 };
 
-#define slNull ((SlObj){    \
-        .frozen = true,     \
-        .type = SlObj_Null, \
-        .mtIdx = 0          \
+#define slNull ((SlObj){                                                       \
+        .frozen = true,                                                        \
+        .type = SlObj_Null,                                                    \
+        .mtIdx = 0                                                             \
     })
 
-#define slTrue ((SlObj){    \
-        .frozen = true,     \
-        .type = SlObj_Bool, \
-        .mtIdx = 0,         \
-        .as.boolean = true  \
+#define slTrue ((SlObj){                                                       \
+        .frozen = true,                                                        \
+        .type = SlObj_Bool,                                                    \
+        .mtIdx = 0,                                                            \
+        .as.boolean = true                                                     \
     })
 
-#define slFalse ((SlObj){   \
-        .frozen = true,     \
-        .type = SlObj_Bool, \
-        .mtIdx = 0,         \
-        .as.boolean = false \
+#define slFalse ((SlObj){                                                      \
+        .frozen = true,                                                        \
+        .type = SlObj_Bool,                                                    \
+        .mtIdx = 0,                                                            \
+        .as.boolean = false                                                    \
     })
 
 SlObj slObjInt(uint64_t value);
