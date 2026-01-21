@@ -1,10 +1,13 @@
 #include "sl_lexer.h"
-#include "clib_mem.h"
+#include "sl_array.h"
 
 #include <limits.h>
 #include <stdbool.h>
 #include <string.h>
 #include <ctype.h>
+
+SL_ARRAY_TYPE(SlToken, SlTokenList);
+SL_ARRAY_SRC(SlToken, SlTokenList, tokens);
 
 typedef struct SlLexerState {
     SlVM *vm;
@@ -16,19 +19,26 @@ typedef struct SlLexerState {
     uint32_t strsLen;
     uint32_t strsCap;
 
-    SlToken *tokens;
-    uint32_t tokensLen;
-    uint32_t tokensCap;
+    SlTokenList tokens;
 
     uint32_t pos;
 } SlLexerState;
 
+static const struct {
+    char *str;
+    SlTokenKind kind;
+} keywords[] = {
+    { "var", SlToken_KwVar },
+    { "func", SlToken_KwFunc }
+};
+static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
+
 static bool appendToken(SlLexerState *l, SlToken token);
-static uint8_t *appendStr(SlLexerState *l, uint8_t *str, uint32_t len);
+static uint32_t appendStr(SlLexerState *l, uint8_t *str, uint32_t len);
 static bool appendNumber(SlLexerState *l);
 static bool appendIdent(SlLexerState *l);
 
-SlTokens slTokenize(SlVM *vm, uint8_t *text, uint32_t len) {
+SlTokens slTokenize(SlVM *vm, const uint8_t *text, uint32_t len) {
     SlLexerState l = {
         .vm = vm,
         .text = text,
@@ -36,9 +46,7 @@ SlTokens slTokenize(SlVM *vm, uint8_t *text, uint32_t len) {
         .strs = NULL,
         .strsLen = 0,
         .strsCap = 0,
-        .tokens = NULL,
-        .tokensLen = 0,
-        .tokensCap = 0,
+        .tokens = { 0 },
         .pos = 0
     };
 
@@ -48,22 +56,32 @@ SlTokens slTokenize(SlVM *vm, uint8_t *text, uint32_t len) {
         if (isspace(ch)) {
             continue;
         } else if (ch == '+') {
-            success = appendToken(&l, (SlToken) { .kind = SlToken_Add });
+            success = appendToken(&l, (SlToken){ .kind = SlToken_Plus });
+        } else if (ch == ',') {
+            success = appendToken(&l, (SlToken){ .kind = SlToken_Comma });
+        } else if (ch == ';') {
+            success = appendToken(&l, (SlToken){ .kind = SlToken_Semicolon });
+        } else if (ch == '(') {
+            success = appendToken(&l, (SlToken){ .kind = SlToken_LeftParen });
+        } else if (ch == ')') {
+            success = appendToken(&l, (SlToken){ .kind = SlToken_RightParen });
+        } else if (ch == '=') {
+            success = appendToken(&l, (SlToken){ .kind = SlToken_Equals });
         } else if (isdigit(ch)) {
             success = appendNumber(&l);
         } else if (isalpha(ch) || ch == '_') {
             success = appendIdent(&l);
         } else {
-            if (isprint(ch))
+            if (isprint(ch)) {
                 slSetError(vm, "invalid character %c", ch);
-            else {
+            } else {
                 slSetError(vm, "invalid byte 0x%02x", ch);
             }
             success = false;
         }
 
         if (!success) {
-            memFree(l.tokens);
+            tokenClear(l.tokens);
             memFree(l.strs);
             return (SlTokens) {
                 .strs = NULL,
@@ -75,41 +93,34 @@ SlTokens slTokenize(SlVM *vm, uint8_t *text, uint32_t len) {
 
     return (SlTokens) {
         .strs = l.strs,
-        .tokens = l.tokens,
-        .tokenCount = l.tokensLen
+        .tokens = l.tokens.data,
+        .tokenCount = l.tokens.len
     };
 }
 
 static bool appendToken(SlLexerState *l, SlToken token) {
-    if (l->tokensCap == l->tokensLen) {
-        uint32_t newCap = l->tokensCap == 0 ? 128 : l->tokensCap * 2;
-        SlToken *newTokens = memChange(l->tokens, newCap, sizeof(*l->tokens));
-        if (newTokens == NULL) {
-            slSetOutOfMemoryError(l->vm);
-            return false;
-        }
-        l->tokens = newTokens;
-        l->tokensCap = newCap;
+    if (!tokensPush(&l->tokens, token)) {
+        slSetOutOfMemoryError(l->vm);
+        return false;
     }
-    l->tokens[l->tokensLen++] = token;
     return true;
 }
 
-static uint8_t *appendStr(SlLexerState *l, uint8_t *str, uint32_t len) {
+static uint32_t appendStr(SlLexerState *l, uint8_t *str, uint32_t len) {
     if (l->strsLen + len > l->strsCap) {
         uint32_t newCap = (len + l->strsLen) * 2;
         uint8_t *newStrs = memChange(l->strs, newCap, sizeof(*l->strs));
         if (newStrs == NULL) {
             slSetOutOfMemoryError(l->vm);
-            return NULL;
+            return 0;
         }
         l->strs = newStrs;
         l->strsCap = newCap;
     }
-    uint8_t *outPtr = l->strs + l->strsLen;
-    memcpy(outPtr, str, len);
+    uint32_t outIdx = l->strsLen;
+    memcpy(l->strs + l->strsLen, str, len);
     l->strsLen += len;
-    return outPtr;
+    return outIdx;
 }
 
 static bool appendNumber(SlLexerState *l) {
@@ -122,7 +133,7 @@ static bool appendNumber(SlLexerState *l) {
     l->pos--;
     return appendToken(
         l,
-        (SlToken){ .kind = SlToken_Int, .pos = pos, .as.intLiteral = n }
+        (SlToken){ .kind = SlToken_NumInt, .pos = pos, .as.numInt = n }
     );
 }
 
@@ -138,9 +149,16 @@ static bool appendIdent(SlLexerState *l) {
 
     uint32_t len = l->pos - start;
     l->pos--;
-    uint8_t *str = appendStr(l, l->text + start, len);
-    if (str == NULL) {
+    uint32_t strIdx = appendStr(l, l->text + start, len);
+    if (strIdx == 0 && l->vm->error.occurred) {
         return false;
+    }
+
+    const char *identStr = (const char *)(l->text + start);
+    for (size_t i = 0; i < keywordsLen; i++) {
+        if (strncmp(identStr, keywords[i].str, len) == 0) {
+            return appendToken(l, (SlToken){ .kind = keywords[i].kind });
+        }
     }
 
     return appendToken(
@@ -149,7 +167,7 @@ static bool appendIdent(SlLexerState *l) {
             .kind = SlToken_Ident,
             .pos = start,
             .as.ident.len =  len,
-            .as.ident.value = str
+            .as.ident.strIdx = strIdx
         }
     );
 }

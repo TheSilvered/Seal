@@ -8,8 +8,16 @@
 
 typedef enum SlTokenKind {
     SlToken_Ident,
-    SlToken_Int,
-    SlToken_Add
+    SlToken_NumInt,
+    SlToken_Plus,
+    SlToken_Comma,
+    SlToken_Semicolon,
+    SlToken_LeftParen,
+    SlToken_RightParen,
+    SlToken_Equals,
+
+    SlToken_KwVar,
+    SlToken_KwFunc,
 } SlTokenKind;
 
 typedef struct SlToken {
@@ -17,10 +25,10 @@ typedef struct SlToken {
     uint32_t pos;
     union {
         struct {
-            uint8_t *value;
+            uint32_t strIdx;
             uint32_t len;
-        } ident, str;
-        int64_t intLiteral;
+        } ident;
+        int64_t numInt;
     } as;
 } SlToken;
 
@@ -30,6 +38,6 @@ typedef struct SlTokens {
     size_t tokenCount;
 } SlTokens;
 
-SlTokens slTokenize(SlVM *vm, uint8_t *text, uint32_t len);
+SlTokens slTokenize(SlVM *vm, const uint8_t *text, uint32_t len);
 
 #endif // !SL_LEXER_H_
