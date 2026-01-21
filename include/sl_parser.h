@@ -27,6 +27,6 @@ typedef struct SlAst {
     uint8_t *strs;
 } SlAst;
 
-SlAst slParse(SlVM *vm, const uint8_t *text, uint32_t len);
+SlAst slParse(SlVM *vm, SlSourceHandle sourceHd);
 
 #endif // !SL_PARSER_H_

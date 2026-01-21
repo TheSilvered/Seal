@@ -6,8 +6,8 @@
 #include <string.h>
 #include <ctype.h>
 
-SL_ARRAY_TYPE(SlToken, SlTokenList);
-SL_ARRAY_SRC(SlToken, SlTokenList, tokens);
+slArrayType(SlToken, SlTokenList);
+slArrayImpl(SlToken, SlTokenList, tokens);
 
 typedef struct SlLexerState {
     SlVM *vm;
@@ -38,11 +38,13 @@ static uint32_t appendStr(SlLexerState *l, uint8_t *str, uint32_t len);
 static bool appendNumber(SlLexerState *l);
 static bool appendIdent(SlLexerState *l);
 
-SlTokens slTokenize(SlVM *vm, const uint8_t *text, uint32_t len) {
+SlTokens slTokenize(SlVM *vm, SlSourceHandle sourceHd) {
+    SlSource source = slGetSource(vm, sourceHd);
+
     SlLexerState l = {
         .vm = vm,
-        .text = text,
-        .len = len,
+        .text = source.text,
+        .len = source.textLen,
         .strs = NULL,
         .strsLen = 0,
         .strsCap = 0,
@@ -50,8 +52,8 @@ SlTokens slTokenize(SlVM *vm, const uint8_t *text, uint32_t len) {
         .pos = 0
     };
 
-    for (l.pos = 0; l.pos < len; l.pos++) {
-        uint8_t ch = text[l.pos];
+    for (l.pos = 0; l.pos < l.len; l.pos++) {
+        uint8_t ch = l.text[l.pos];
         bool success = true;
         if (isspace(ch)) {
             continue;

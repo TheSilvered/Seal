@@ -38,6 +38,6 @@ typedef struct SlTokens {
     size_t tokenCount;
 } SlTokens;
 
-SlTokens slTokenize(SlVM *vm, const uint8_t *text, uint32_t len);
+SlTokens slTokenize(SlVM *vm, SlSourceHandle sourceHd);
 
 #endif // !SL_LEXER_H_
