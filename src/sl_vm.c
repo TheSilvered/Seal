@@ -59,3 +59,8 @@ void slSetError(SlVM *vm, const char *fmt, ...) {
     va_end(args);
     vm->error.occurred = true;
 }
+
+void slSetErrorVArg(SlVM *vm, const char *fmt, va_list args) {
+    vsnprintf(vm->error.msg, sizeof(vm->error.msg), fmt, args);
+    vm->error.occurred = true;
+}

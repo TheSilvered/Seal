@@ -11,20 +11,41 @@ typedef enum SlNodeKind {
     SlNode_Expr
 } SlNodeKind;
 
-typedef uint32_t SlNodeIdx;
+typedef enum SlBinOp {
+    SlBinOp_Add,
+    SlBinOp_Sub,
+    SlBinOp_Mul,
+    SlBinOp_Div,
+    SlBinOp_Pow,
+    SlBinOp_Mod
+} SlBinOp;
+
+typedef int32_t SlNodeIdx;
 
 typedef struct SlNode {
     SlNodeKind kind;
+    uint32_t line;
     union {
         struct {
             uint32_t nameIdx, nameLen;
             SlNodeIdx value;
         } varDeclr;
+        struct {
+            SlNodeIdx *nodes;
+            uint32_t nodeCount;
+        } block;
+        struct {
+            SlNodeIdx lhs, rhs;
+            SlBinOp op;
+        } binOp;
     } as;
 } SlNode;
 
 typedef struct SlAst {
     uint8_t *strs;
+    SlNode *nodes;
+    uint32_t nodeCount;
+    SlNodeIdx root;
 } SlAst;
 
 SlAst slParse(SlVM *vm, SlSourceHandle sourceHd);

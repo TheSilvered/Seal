@@ -29,5 +29,6 @@ SlSource slGetSource(SlVM *vm, SlSourceHandle hd);
 
 void slSetOutOfMemoryError(SlVM *vm);
 void slSetError(SlVM *vm, const char *fmt, ...);
+void slSetErrorVArg(SlVM *vm, const char *fmt, va_list args);
 
 #endif // !SL_VM_H_

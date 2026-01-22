@@ -10,19 +10,30 @@ typedef enum SlTokenKind {
     SlToken_Ident,
     SlToken_NumInt,
     SlToken_Plus,
+    SlToken_Star,
+    SlToken_Hyphen,
+    SlToken_FwSlash,
+    SlToken_Perc,
     SlToken_Comma,
+    SlToken_Colon,
     SlToken_Semicolon,
     SlToken_LeftParen,
     SlToken_RightParen,
+    SlToken_LeftSquare,
+    SlToken_RightSquare,
+    SlToken_LeftCurly,
+    SlToken_RightCurly,
     SlToken_Equals,
 
     SlToken_KwVar,
     SlToken_KwFunc,
+
+    SlToken_Eof
 } SlTokenKind;
 
 typedef struct SlToken {
     SlTokenKind kind;
-    uint32_t pos;
+    uint32_t line;
     union {
         struct {
             uint32_t strIdx;
@@ -39,5 +50,6 @@ typedef struct SlTokens {
 } SlTokens;
 
 SlTokens slTokenize(SlVM *vm, SlSourceHandle sourceHd);
+const char *slTokenKindToStr(SlTokenKind kind);
 
 #endif // !SL_LEXER_H_

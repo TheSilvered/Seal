@@ -8,11 +8,15 @@
 #include <stdio.h>
 #include "clib_mem.h"
 
-#define slArrayType(type, name)                                                \
+#define slArrayType(type, name, prefix)                                        \
     typedef struct name {                                                      \
         type *data;                                                            \
         uint32_t len, cap;                                                     \
-    } name                                                                     \
+    } name;                                                                    \
+    bool prefix##Push(name *arr, type obj);                                    \
+    type *prefix##At(name *arr, int64_t idx);                                  \
+    type *prefix##At(name *arr, int64_t idx);                                  \
+    void prefix##Clear(name *arr);
 
 #define slArrayImpl(type, name, prefix)                                        \
     bool prefix##Push(name *arr, type obj) {                                   \
@@ -49,5 +53,7 @@
         memFree(arr->data);                                                    \
         arr->data = NULL;                                                      \
     }
+
+slArrayType(int32_t, i32Arr, i32)
 
 #endif // !SL_ARRAY_H_
