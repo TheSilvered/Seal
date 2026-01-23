@@ -8,7 +8,8 @@
 typedef enum SlNodeKind {
     SlNode_Block,
     SlNode_VarDeclr,
-    SlNode_Expr
+    SlNode_BinOp,
+    SlNode_NumInt,
 } SlNodeKind;
 
 typedef enum SlBinOp {
@@ -38,6 +39,7 @@ typedef struct SlNode {
             SlNodeIdx lhs, rhs;
             SlBinOp op;
         } binOp;
+        int64_t numInt;
     } as;
 } SlNode;
 

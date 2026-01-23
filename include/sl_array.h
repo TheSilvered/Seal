@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "clib_mem.h"
 
 #define slArrayType(type, name, prefix)                                        \
@@ -20,8 +21,9 @@
 
 #define slArrayImpl(type, name, prefix)                                        \
     bool prefix##Push(name *arr, type obj) {                                   \
+        assert(arr->len <= arr->cap);                                          \
         if (arr->len == arr->cap) {                                            \
-            uint32_t newCap = arr->cap == 0 ? 1 : (uint32_t)(arr->cap * 1.5);  \
+            uint32_t newCap = arr->cap == 0 ? 1 : arr->cap * 2;                \
             type *newData = memExpand(arr->data, newCap, sizeof(*arr->data));  \
             if (newData == NULL) {                                             \
                 return false;                                                  \

@@ -32,7 +32,7 @@
 
 #ifndef CLIB_MEM_TRACE_ALLOCS
 
-void *memAlloc(size_t objectSize, size_t objectCount) {
+void *memAlloc(size_t objectCount, size_t objectSize) {
     const size_t size = objectSize * objectCount;
     // Detect overflow
     memAssert(objectSize == 0 || size / objectCount == objectSize);
@@ -71,7 +71,7 @@ void *memAllocZeroedBytes(size_t byteCount) {
     return block;
 }
 
-void *memExpand(void *block, size_t objectSize, size_t newCount) {
+void *memExpand(void *block, size_t newCount, size_t objectSize) {
     const size_t size = objectSize * newCount;
     memAssert(size != 0);
     // Detect overflow
@@ -104,7 +104,7 @@ void *memExpandBytes(void *block, size_t newByteCount) {
     return newBlock;
 }
 
-void *memShrink(void *block, size_t objectSize, size_t newCount) {
+void *memShrink(void *block, size_t newCount, size_t objectSize) {
     size_t newSize = objectSize * newCount;
     // Detect overflow
     memAssert(objectSize == 0 || newSize / newCount == objectSize);
@@ -133,7 +133,7 @@ void *memShrinkBytes(void *block, size_t newByteCount) {
     return newBlock;
 }
 
-void *memChange(void *block, size_t objectSize, size_t objectCount) {
+void *memChange(void *block, size_t objectCount, size_t objectSize) {
     if (block == NULL) {
         return memAlloc(objectSize, objectCount);
     } else if (objectSize == 0 || objectCount == 0) {

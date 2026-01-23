@@ -4,12 +4,12 @@
 #include "sl_array.h"
 
 typedef struct SlSource {
-    char *path;
+    const char *path;
     uint8_t *text;
     uint32_t textLen;
 } SlSource;
 
-slArrayType(SlSource, SlSources);
+slArrayType(SlSource, SlSources, slSources);
 typedef int32_t SlSourceHandle;
 
 typedef struct SlVM {

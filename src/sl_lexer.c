@@ -13,7 +13,7 @@ slArrayImpl(SlToken, SlTokenList, tokens)
 typedef struct SlLexerState {
     SlVM *vm;
 
-    char *path;
+    const char *path;
     uint8_t *text;
     uint32_t len;
 
@@ -38,6 +38,7 @@ static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
 
 static void setError(SlLexerState *l, const char *fmt, ...);
 static bool appendToken(SlLexerState *l, SlToken token);
+static bool appendSimpleToken(SlLexerState *l, SlTokenKind kind);
 static uint32_t appendStr(SlLexerState *l, uint8_t *str, uint32_t len);
 static bool appendNumber(SlLexerState *l);
 static bool appendIdent(SlLexerState *l);
@@ -45,9 +46,9 @@ static bool appendIdent(SlLexerState *l);
 const char *slTokenKindToStr(SlTokenKind kind) {
     switch (kind) {
     case SlToken_Ident:
-        return "an identifier";
+        return "<identifier>";
     case SlToken_NumInt:
-        return "a number";
+        return "<number>";
     case SlToken_Plus:
         return "'+'";
     case SlToken_Star:
@@ -83,9 +84,10 @@ const char *slTokenKindToStr(SlTokenKind kind) {
     case SlToken_KwFunc:
         return "'func'";
     case SlToken_Eof:
-        return "the end of the file";
+        return "<end of file>";
     default:
         assert("unreachable" && false);
+        return "";
     }
 }
 
@@ -157,7 +159,7 @@ SlTokens slTokenize(SlVM *vm, SlSourceHandle sourceHd) {
         }
 
         if (!success) {
-            tokenClear(l.tokens);
+            tokensClear(&l.tokens);
             memFree(l.strs);
             return (SlTokens) {
                 .strs = NULL,
@@ -194,10 +196,7 @@ static bool appendToken(SlLexerState *l, SlToken token) {
 }
 
 static bool appendSimpleToken(SlLexerState *l, SlTokenKind kind) {
-    return appendToken(
-        &l,
-        (SlToken){ .kind = SlToken_Plus, .line = l->line }
-    );
+    return appendToken(l, (SlToken){ .kind = kind, .line = l->line });
 }
 
 static uint32_t appendStr(SlLexerState *l, uint8_t *str, uint32_t len) {
@@ -244,11 +243,7 @@ static bool appendIdent(SlLexerState *l) {
 
     uint32_t len = l->pos - start;
     l->pos--;
-    uint32_t strIdx = appendStr(l, l->text + start, len);
-    if (strIdx == 0 && l->vm->error.occurred) {
-        return false;
-    }
-
+    
     const char *identStr = (const char *)(l->text + start);
     for (size_t i = 0; i < keywordsLen; i++) {
         if (strncmp(identStr, keywords[i].str, len) == 0) {
@@ -257,6 +252,11 @@ static bool appendIdent(SlLexerState *l) {
                 (SlToken){ .kind = keywords[i].kind, .line = line }
             );
         }
+    }
+
+    uint32_t strIdx = appendStr(l, l->text + start, len);
+    if (strIdx == 0 && l->vm->error.occurred) {
+        return false;
     }
 
     return appendToken(

@@ -5,7 +5,7 @@
 #include <stdarg.h>
 #include <limits.h>
 
-slArrayImpl(SlSource, SlSources, source);
+slArrayImpl(SlSource, SlSources, source)
 
 SlSourceHandle slSourceFromCStr(SlVM *vm, const char *str) {
     size_t len = strlen(str);

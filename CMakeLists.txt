@@ -8,11 +8,14 @@ endif()
 
 include_directories(seal include)
 add_library(seal
-    src/sl_object.c
-    src/sl_vm.c
     src/clib_mem.c
+    src/sl_array.c
     src/sl_lexer.c
+    src/sl_object.c
+    src/sl_parser.c
+    src/sl_vm.c
 )
+target_compile_definitions(seal PRIVATE CLIB_MEM_TRACE_ALLOCS)
 
 add_executable(test
     "test/main.c"
