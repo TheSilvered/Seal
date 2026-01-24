@@ -29,6 +29,84 @@ static SlNodeIdx parseExpr(SlParserState *p);
 static SlNodeIdx parseMul(SlParserState *p);
 static SlNodeIdx parseValue(SlParserState *p);
 
+static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent);
+static void printBlock(SlNode node, const SlAst *ast, uint32_t indent);
+static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent);
+static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
+static void printNumInt(SlNode node, uint32_t indent);
+
+void slPrintAst(const SlAst *ast) {
+    printNode(ast->root, ast, 0);
+}
+
+#define INDENT_WIDTH 2
+
+static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
+    SlNode node = ast->nodes[idx];
+    switch (node.kind) {
+    case SlNode_Block:
+        printBlock(node, ast, indent);
+        break;
+    case SlNode_VarDeclr:
+        printVarDeclr(node, ast, indent);
+        break;
+    case SlNode_BinOp:
+        printBinOp(node, ast, indent);
+        break;
+    case SlNode_NumInt:
+        printNumInt(node, indent);
+        break;
+    }
+}
+
+static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf("%*sblock\n", indent * INDENT_WIDTH, "");
+    for (uint32_t i = 0; i < node.as.block.nodeCount; i++) {
+        printNode(node.as.block.nodes[i], ast, indent + 1);
+    }
+}
+
+static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf(
+        "%*svar '%.*s'\n",
+        indent * INDENT_WIDTH, "",
+        node.as.varDeclr.nameLen,
+        (char *)&ast->strs[node.as.varDeclr.nameIdx]
+    );
+    printNode(node.as.varDeclr.value, ast, indent + 1);
+}
+
+static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent) {
+    const char *op = NULL;
+    switch (node.as.binOp.op) {
+    case SlBinOp_Add:
+        op = "+";
+        break;
+    case SlBinOp_Sub:
+        op = "-";
+        break;
+    case SlBinOp_Mul:
+        op = "*";
+        break;
+    case SlBinOp_Div:
+        op = "/";
+        break;
+    case SlBinOp_Mod:
+        op = "%";
+        break;
+    case SlBinOp_Pow:
+        op = "^";
+        break;
+    }
+    printf("%*s%s\n", indent * INDENT_WIDTH, "", op);
+    printNode(node.as.binOp.lhs, ast, indent + 1);
+    printNode(node.as.binOp.rhs, ast, indent + 1);
+}
+
+static void printNumInt(SlNode node, uint32_t indent) {
+    printf("%*s%"PRIi64" (int)\n", indent * INDENT_WIDTH, "", node.as.numInt);
+}
+
 SlAst slParse(SlVM *vm, SlSourceHandle sourceHd) {
     SlSource source = slGetSource(vm, sourceHd);
     SlParserState p = {

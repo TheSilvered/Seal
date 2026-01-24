@@ -51,5 +51,6 @@ typedef struct SlAst {
 } SlAst;
 
 SlAst slParse(SlVM *vm, SlSourceHandle sourceHd);
+void slPrintAst(const SlAst *ast);
 
 #endif // !SL_PARSER_H_
