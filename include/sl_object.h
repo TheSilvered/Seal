@@ -19,7 +19,20 @@ typedef enum SlObjType {
     SlObj_Str,
     SlObj_Map,
     SlObj_Func,
-    SlObj_Struct
+    SlObj_Struct,
+
+    // Internal types
+
+    SlObj_Bytecode,
+    SlObj_SharedSlots,
+    SlObj_EmptySlot,
+
+    // Frozen types
+
+    SlObj_FrozenList = SlObj_List | 0x800, // tuple
+    SlObj_FrozenStr  = SlObj_Str  | 0x800,
+    SlObj_FrozenMap  = SlObj_Map  | 0x800,
+    SlObj_FrozenFunc = SlObj_Func | 0x800  // function prototype
 } SlObjType;
 
 typedef bool SlBool;
@@ -30,16 +43,16 @@ typedef struct SlStr SlStr;
 typedef struct SlMap SlMap;
 typedef struct SlFunc SlFunc;
 typedef struct SlStruct SlStruct;
+typedef struct SlBytecode SlBytecode;
+typedef struct SlSharedSlots SlSharedSlots;
 
 typedef struct SlGCObj {
     size_t refCount;
 } SlGCObj;
 
 typedef struct SlObj {
-    bool frozen; // frozen flag
-    uint8_t type; // object type
-    uint16_t mtIdx; // method table index
-    uint32_t extra; // any extra data that is constant per-instantce
+    uint32_t type;
+    uint32_t mtIdx; // method table index
     union {
         SlBool boolean;
         SlInt numInt;
@@ -49,6 +62,8 @@ typedef struct SlObj {
         SlMap *map;
         SlFunc *func;
         SlStruct *structure;
+        SlBytecode *bytecode;
+        SlSharedSlots *sharedSlots;
     } as;
 } SlObj;
 
@@ -76,6 +91,9 @@ struct SlMap {
 
 struct SlFunc {
     SlGCObj asGCObj;
+    SlStr *name;
+    SlBytecode *bytecode;
+    SlSharedSlots *sharedSlots;
 };
 
 struct SlStruct {
@@ -83,21 +101,40 @@ struct SlStruct {
     uint64_t value;
 };
 
+typedef struct SlLineInfo {
+    size_t start;
+    uint32_t len;
+    uint32_t line;
+} SlLineInfo;
+
+struct SlBytecode {
+    SlGCObj asGCObj;
+    uint8_t *bytes;
+    size_t size;
+    SlStr *path;
+    SlLineInfo *lineInfo;
+    size_t lineInfoCount;
+    SlObj *constants;
+};
+
+struct SlSharedSlots {
+    SlGCObj asGCObj;
+    size_t slotCount;
+    SlObj slots[1];
+};
+
 #define slNull ((SlObj){                                                       \
-        .frozen = true,                                                        \
         .type = SlObj_Null,                                                    \
         .mtIdx = 0                                                             \
     })
 
 #define slTrue ((SlObj){                                                       \
-        .frozen = true,                                                        \
         .type = SlObj_Bool,                                                    \
         .mtIdx = 0,                                                            \
         .as.boolean = true                                                     \
     })
 
 #define slFalse ((SlObj){                                                      \
-        .frozen = true,                                                        \
         .type = SlObj_Bool,                                                    \
         .mtIdx = 0,                                                            \
         .as.boolean = false                                                    \
