@@ -1,7 +1,7 @@
 #ifndef SL_VM_H_
 #define SL_VM_H_
 
-#include "sl_array.h"
+#include "sl_object.h"
 
 typedef struct SlSource {
     const char *path;
@@ -9,23 +9,29 @@ typedef struct SlSource {
     uint32_t textLen;
 } SlSource;
 
-slArrayType(SlSource, SlSources, slSources);
-typedef int32_t SlSourceHandle;
+typedef struct SlStackBlock {
+    struct SlStackBlock *prev;
+    uint16_t used, cap;
+    SlObj slots[1];
+} SlStackBlock;
 
 typedef struct SlVM {
     struct {
         bool occurred;
         char msg[512];
     } error;
-    SlSources sources;
+    SlStackBlock *stackTop;
 } SlVM;
 
-// Create a source from a C string.
-// Return the handle on success and -1 on failure.
-SlSourceHandle slSourceFromCStr(SlVM *vm, const char *str);
-// Get a source file.
-// If the handle is invalid `path` and `text` will be `NULL` and `textLen` 0.
-SlSource slGetSource(SlVM *vm, SlSourceHandle hd);
+// Create a source from a C string. No memory is allocated.
+// The length caps at UINT32_MAX even if the string is longer.
+SlSource slSourceFromCStr(const char *str);
+
+// Add `count` slots to the stack and return a pointer to the first.
+SlObj *slPushSlots(SlVM *vm, uint16_t count);
+// Remove `count` slots from the stack. Each call must undo a previous
+// `slPushSlots` call with the same number of slots.
+void slPopSlots(SlVM *vm, uint16_t count);
 
 void slSetOutOfMemoryError(SlVM *vm);
 void slSetError(SlVM *vm, const char *fmt, ...);

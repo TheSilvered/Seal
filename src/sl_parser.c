@@ -1,3 +1,4 @@
+#include "sl_array.h"
 #include "sl_parser.h"
 #include "sl_lexer.h"
 
@@ -107,15 +108,14 @@ static void printNumInt(SlNode node, uint32_t indent) {
     printf("%*s%"PRIi64" (int)\n", indent * INDENT_WIDTH, "", node.as.numInt);
 }
 
-SlAst slParse(SlVM *vm, SlSourceHandle sourceHd) {
-    SlSource source = slGetSource(vm, sourceHd);
+SlAst slParse(SlVM *vm, SlSource *source) {
     SlParserState p = {
         .vm = vm,
-        .path = source.path,
+        .path = source->path,
         .idx = 0,
         .nodes = { 0 },
     };
-    p.tokens = slTokenize(vm, sourceHd);
+    p.tokens = slTokenize(vm, source);
     if (vm->error.occurred) {
         nodesClear(&p.nodes);
         return (SlAst){ .root = -1 };

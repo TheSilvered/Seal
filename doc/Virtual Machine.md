@@ -5,7 +5,6 @@ The virtual machine must keep track of:
 - the call stack
 - the value stack
 - all allocated objects
-- all loaded files
 
 A function has:
 

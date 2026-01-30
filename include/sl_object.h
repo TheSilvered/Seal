@@ -5,9 +5,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define SlObjIsNumeric(type) (((type) >> 1) == 0x1)
-#define SlObjIsSequence(type) (((type) >> 2) == 0x1)
-
 typedef struct SlObj SlObj;
 
 typedef enum SlObjType {

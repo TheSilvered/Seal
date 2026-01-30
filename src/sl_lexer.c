@@ -91,14 +91,12 @@ const char *slTokenKindToStr(SlTokenKind kind) {
     }
 }
 
-SlTokens slTokenize(SlVM *vm, SlSourceHandle sourceHd) {
-    SlSource source = slGetSource(vm, sourceHd);
-
+SlTokens slTokenize(SlVM *vm, SlSource *source) {
     SlLexerState l = {
         .vm = vm,
-        .path = source.path,
-        .text = source.text,
-        .len = source.textLen,
+        .path = source->path,
+        .text = source->text,
+        .len = source->textLen,
         .strs = NULL,
         .strsLen = 0,
         .strsCap = 0,

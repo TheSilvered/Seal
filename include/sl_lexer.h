@@ -49,7 +49,7 @@ typedef struct SlTokens {
     size_t tokenCount;
 } SlTokens;
 
-SlTokens slTokenize(SlVM *vm, SlSourceHandle sourceHd);
+SlTokens slTokenize(SlVM *vm, SlSource *source);
 const char *slTokenKindToStr(SlTokenKind kind);
 
 #endif // !SL_LEXER_H_

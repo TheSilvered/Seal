@@ -1,6 +1,10 @@
 #include <stdlib.h>
 #include "clib_mem.h"
 
+#ifdef _MSC_VER
+#pragma warning(disable : 4702) // unreachable code
+#endif // !_MSC_VER
+
 #ifndef memLog
 #include <stdio.h>
 #define memLog(...) fprintf(stderr, __VA_ARGS__)
@@ -32,10 +36,10 @@
 
 #ifndef CLIB_MEM_TRACE_ALLOCS
 
-void *memAlloc(size_t objectCount, size_t objectSize) {
+void *memAlloc(size_t objectSize, size_t objectCount) {
     const size_t size = objectSize * objectCount;
     // Detect overflow
-    memAssert(objectSize == 0 || size / objectCount == objectSize);
+    memAssert(size == 0 || size / objectCount == objectSize);
     void *block = malloc(objectSize * objectCount);
     if (block == NULL) {
         memFail("Out of memory.\n");
@@ -71,7 +75,7 @@ void *memAllocZeroedBytes(size_t byteCount) {
     return block;
 }
 
-void *memExpand(void *block, size_t newCount, size_t objectSize) {
+void *memExpand(void *block, size_t objectSize, size_t newCount) {
     const size_t size = objectSize * newCount;
     memAssert(size != 0);
     // Detect overflow
@@ -104,10 +108,10 @@ void *memExpandBytes(void *block, size_t newByteCount) {
     return newBlock;
 }
 
-void *memShrink(void *block, size_t newCount, size_t objectSize) {
+void *memShrink(void *block, size_t objectSize, size_t newCount) {
     size_t newSize = objectSize * newCount;
     // Detect overflow
-    memAssert(objectSize == 0 || newSize / newCount == objectSize);
+    memAssert(newSize == 0 || newSize / newCount == objectSize);
     if (newSize == 0) {
         memFree(block);
         return NULL;
@@ -133,7 +137,7 @@ void *memShrinkBytes(void *block, size_t newByteCount) {
     return newBlock;
 }
 
-void *memChange(void *block, size_t objectCount, size_t objectSize) {
+void *memChange(void *block, size_t objectSize, size_t objectCount) {
     if (block == NULL) {
         return memAlloc(objectSize, objectCount);
     } else if (objectSize == 0 || objectCount == 0) {
@@ -142,7 +146,7 @@ void *memChange(void *block, size_t objectCount, size_t objectSize) {
     } else {
         const size_t size = objectSize * objectCount;
         // Detect overflow
-        memAssert(objectSize == 0 || size / objectCount == objectSize);
+        memAssert(size == 0 || size / objectCount == objectSize);
         void *newBlock = realloc(block, size);
         if (newBlock == NULL) {
             memFail("Out of memory.\n");
@@ -467,7 +471,7 @@ void *_memAlloc(
     memAssert(threadMutexLock(&g_memMutex));
     const size_t size = objectSize * objectCount;
     // Detect overflow
-    memAssert(objectSize == 0 || size / objectCount == objectSize);
+    memAssert(size == 0 || size / objectCount == objectSize);
     void *block = _memAllocFilled(size, _garbageByte, line, file);
     memAssert(threadMutexUnlock(&g_memMutex));
     return block;
@@ -489,7 +493,7 @@ void *_memAllocZeroed(
     memAssert(threadMutexLock(&g_memMutex));
     const size_t size = objectSize * objectCount;
     // Detect overflow
-    memAssert(objectSize == 0 || size / objectCount == objectSize);
+    memAssert(size == 0 || size / objectCount == objectSize);
     void *block = _memAllocFilled(size, 0, line, file);
     memAssert(threadMutexUnlock(&g_memMutex));
     return block;
@@ -543,7 +547,7 @@ void *_memExpand(
 ) {
     const size_t size = objectSize * newCount;
     // Detect overflow
-    memAssert(objectSize == 0 || size / newCount == objectSize);
+    memAssert(size == 0 || size / newCount == objectSize);
     return _memExpandBytes(block, size, line, file);
 }
 
@@ -584,7 +588,7 @@ void *_memShrink(
 ) {
     const size_t size = objectSize * newCount;
     // Detect overflow
-    memAssert(objectSize == 0 || size / newCount == objectSize);
+    memAssert(size == 0 || size / newCount == objectSize);
     return _memShrinkBytes(block, size, line, file);
 }
 
@@ -631,7 +635,7 @@ void *_memChange(
 ) {
     const size_t size = objectSize * objectCount;
     // Detect overflow
-    memAssert(objectSize == 0 || size / objectCount == objectSize);
+    memAssert(size == 0 || size / objectCount == objectSize);
     return _memChangeBytes(block, size, line, file);
 }
 

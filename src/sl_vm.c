@@ -1,49 +1,60 @@
 #include "sl_vm.h"
+#include "clib_mem.h"
 
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <assert.h>
 
-slArrayImpl(SlSource, SlSources, source)
+#define _blockMinCapacity 512 // 8 KiB blocks
 
-SlSourceHandle slSourceFromCStr(SlVM *vm, const char *str) {
-    size_t len = strlen(str);
-    if (len > UINT32_MAX) {
-        slSetError(
-            vm,
-            "%s: string too long, (max is %"PRIu32", got %zu)",
-            __func__,
-            UINT32_MAX,
-            len
+SlObj *slPushSlots(SlVM *vm, uint16_t count) {
+    assert(count != 0);
+
+    SlStackBlock *top = vm->stackTop;
+    if (top == NULL || top->cap - top->used < count) {
+        uint16_t newCap = count > _blockMinCapacity ? count : _blockMinCapacity;
+        SlStackBlock *newBlock = memAllocBytes(
+            sizeof(*newBlock) + (newCap - 1) * sizeof(*newBlock->slots)
         );
-        return -1;
-    }
-    const char *path = "<string>";
-    uint8_t *textBuf = memAllocBytes(len);
-    if (textBuf == NULL) {
-        slSetOutOfMemoryError(vm);
-        return -1;
-    }
-    memcpy(textBuf, str, len);
-    SlSourceHandle hd = vm->sources.len;
-    sourcePush(
-        &vm->sources,
-        (SlSource){
-            .path = path,
-            .text = textBuf,
-            .textLen = len
+        if (newBlock == NULL) {
+            slSetOutOfMemoryError(vm);
+            return NULL;
         }
-    );
-    return hd;
+        newBlock->prev = top;
+        newBlock->cap = newCap;
+        newBlock->used = 0;
+        vm->stackTop = newBlock;
+    }
+
+    SlObj *first = &top->slots[top->used];
+    top->used += count;
+    return first;
 }
 
-SlSource slGetSource(SlVM *vm, SlSourceHandle hd) {
-    if (hd < 0 || hd >= vm->sources.len) {
-        slSetError(vm, "%s: invalid handle", __func__);
-        return (SlSource){ .path = NULL, .text = NULL, .textLen = 0 };
+void slPopSlots(SlVM *vm, uint16_t count) {
+    assert(count != 0);
+    assert(vm->stackTop != NULL);
+    if (vm->stackTop->used == 0) {
+        SlStackBlock *block = vm->stackTop;
+        vm->stackTop = block->prev;
+        memFree(block);
     }
-    return *sourceAt(&vm->sources, hd);
+    assert(vm->stackTop->used >= count);
+    vm->stackTop->used -= count;
+}
+
+SlSource slSourceFromCStr(const char *str) {
+    size_t len = strlen(str);
+    if (len > UINT32_MAX) {
+        len = UINT32_MAX;
+    }
+    return (SlSource) {
+        .path = "<string>",
+        .text = (uint8_t *)str,
+        .textLen = len
+    };
 }
 
 void slSetOutOfMemoryError(SlVM *vm) {
