@@ -6,29 +6,29 @@
 #include <assert.h>
 #include <stdarg.h>
 
-slArrayType(SlNode, SlNodes, nodes)
-slArrayImpl(SlNode, SlNodes, nodes)
+slArrayType(SlNode, Nodes, nodes)
+slArrayImpl(SlNode, Nodes, nodes)
 
-typedef struct SlParserState {
+typedef struct ParserState {
     SlVM *vm;
     const char *path;
     SlTokens tokens;
     uint32_t idx;
-    SlNodes nodes;
-} SlParserState;
+    Nodes nodes;
+} ParserState;
 
-static void setError(SlParserState *p, const char *fmt, ...);
-static SlNodeIdx addNode(SlParserState *p, SlNode node);
-static SlToken token(SlParserState *p);
-static void next(SlParserState *p);
-static bool expect(SlParserState *p, SlTokenKind kind);
-static bool expectNext(SlParserState *p, SlTokenKind kind);
-static SlNodeIdx parseFile(SlParserState *p);
-static SlNodeIdx parseStatement(SlParserState *p);
-static SlNodeIdx parseVarDeclr(SlParserState *p);
-static SlNodeIdx parseExpr(SlParserState *p);
-static SlNodeIdx parseMul(SlParserState *p);
-static SlNodeIdx parseValue(SlParserState *p);
+static void setError(ParserState *p, const char *fmt, ...);
+static SlNodeIdx addNode(ParserState *p, SlNode node);
+static SlToken token(ParserState *p);
+static void next(ParserState *p);
+static bool expect(ParserState *p, SlTokenKind kind);
+static bool expectNext(ParserState *p, SlTokenKind kind);
+static SlNodeIdx parseFile(ParserState *p);
+static SlNodeIdx parseStatement(ParserState *p);
+static SlNodeIdx parseVarDeclr(ParserState *p);
+static SlNodeIdx parseExpr(ParserState *p);
+static SlNodeIdx parseMul(ParserState *p);
+static SlNodeIdx parseValue(ParserState *p);
 
 static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent);
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent);
@@ -109,7 +109,7 @@ static void printNumInt(SlNode node, uint32_t indent) {
 }
 
 SlAst slParse(SlVM *vm, SlSource *source) {
-    SlParserState p = {
+    ParserState p = {
         .vm = vm,
         .path = source->path,
         .idx = 0,
@@ -135,7 +135,7 @@ SlAst slParse(SlVM *vm, SlSource *source) {
     };
 }
 
-static void setError(SlParserState *p, const char *fmt, ...) {
+static void setError(ParserState *p, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     char buf[64];
@@ -146,7 +146,7 @@ static void setError(SlParserState *p, const char *fmt, ...) {
     slSetError(p->vm, "%s:%"PRIu32": %s", p->path, line, buf);
 }
 
-SlNodeIdx addNode(SlParserState *p, SlNode node) {
+SlNodeIdx addNode(ParserState *p, SlNode node) {
     if (!nodesPush(&p->nodes, node)) {
         slSetOutOfMemoryError(p->vm);
         return -1;
@@ -154,16 +154,16 @@ SlNodeIdx addNode(SlParserState *p, SlNode node) {
     return (SlNodeIdx)p->nodes.len - 1;
 }
 
-SlToken token(SlParserState *p) {
+SlToken token(ParserState *p) {
     assert(p->idx < p->tokens.tokenCount);
     return p->tokens.tokens[p->idx];
 }
 
-void next(SlParserState *p) {
+void next(ParserState *p) {
     p->idx++;
 }
 
-bool expect(SlParserState *p, SlTokenKind kind) {
+bool expect(ParserState *p, SlTokenKind kind) {
     if (token(p).kind != kind) {
         setError(
             p,
@@ -176,7 +176,7 @@ bool expect(SlParserState *p, SlTokenKind kind) {
     return true;
 }
 
-static bool expectNext(SlParserState *p, SlTokenKind kind) {
+static bool expectNext(ParserState *p, SlTokenKind kind) {
     if (!expect(p, kind)) {
         return false;
     }
@@ -184,8 +184,9 @@ static bool expectNext(SlParserState *p, SlTokenKind kind) {
     return true;
 }
 
-SlNodeIdx parseFile(SlParserState *p) {
+SlNodeIdx parseFile(ParserState *p) {
     i32Arr nodes = { 0 };
+    uint32_t varCount = 0;
     while (token(p).kind != SlToken_Eof) {
         SlNodeIdx idx = parseStatement(p);
         if (idx == -1) {
@@ -196,6 +197,12 @@ SlNodeIdx parseFile(SlParserState *p) {
             i32Clear(&nodes);
             slSetOutOfMemoryError(p->vm);
             return -1;
+        }
+
+        if (p->nodes.data[idx].kind == SlNode_VarDeclr) {
+            varCount++;
+        } else if (p->nodes.data[idx].kind == SlNode_Block) {
+            varCount += p->nodes.data[idx].as.block.varCount;
         }
     }
     SlNodeIdx node = addNode(
@@ -217,7 +224,7 @@ SlNodeIdx parseFile(SlParserState *p) {
     }
 }
 
-SlNodeIdx parseStatement(SlParserState *p) {
+SlNodeIdx parseStatement(ParserState *p) {
     switch (token(p).kind) {
     case SlToken_KwVar:
         return parseVarDeclr(p);
@@ -231,7 +238,7 @@ SlNodeIdx parseStatement(SlParserState *p) {
     }
 }
 
-SlNodeIdx parseVarDeclr(SlParserState *p) {
+SlNodeIdx parseVarDeclr(ParserState *p) {
     uint32_t line = token(p).line;
     // consume 'var'
     next(p);
@@ -270,7 +277,7 @@ SlNodeIdx parseVarDeclr(SlParserState *p) {
     );
 }
 
-static SlNodeIdx parseExpr(SlParserState *p) {
+static SlNodeIdx parseExpr(ParserState *p) {
     SlNodeIdx lhs = parseMul(p);
     if (lhs == -1) {
         return -1;
@@ -306,7 +313,7 @@ static SlNodeIdx parseExpr(SlParserState *p) {
     return lhs;
 }
 
-static SlNodeIdx parseMul(SlParserState *p) {
+static SlNodeIdx parseMul(ParserState *p) {
     SlNodeIdx lhs = parseValue(p);
     if (lhs == -1) {
         return -1;
@@ -357,7 +364,7 @@ static SlNodeIdx parseMul(SlParserState *p) {
     return lhs;
 }
 
-static SlNodeIdx parseValue(SlParserState *p) {
+static SlNodeIdx parseValue(ParserState *p) {
     switch (token(p).kind) {
     case SlToken_LeftParen: {
         SlNodeIdx node = parseExpr(p);
@@ -373,10 +380,24 @@ static SlNodeIdx parseValue(SlParserState *p) {
         SlToken tok = token(p);
         next(p);
         return addNode(
-            p, (SlNode){
+            p,
+            (SlNode){
                 .kind = SlNode_NumInt,
                 .line = tok.line,
                 .as.numInt = tok.as.numInt
+            }
+        );
+    }
+    case SlToken_Ident: {
+        SlToken tok = token(p);
+        next(p);
+        return addNode(
+            p,
+            (SlNode){
+                .kind = SlNode_Access,
+                .line = tok.line,
+                .as.access.nameIdx = tok.as.ident.strIdx,
+                .as.access.nameLen = tok.as.ident.len
             }
         );
     }

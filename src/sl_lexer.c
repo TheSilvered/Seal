@@ -7,10 +7,10 @@
 #include <ctype.h>
 #include <stdarg.h>
 
-slArrayType(SlToken, SlTokenList, tokens)
-slArrayImpl(SlToken, SlTokenList, tokens)
+slArrayType(SlToken, Tokens, tokens)
+slArrayImpl(SlToken, Tokens, tokens)
 
-typedef struct SlLexerState {
+typedef struct LexerState {
     SlVM *vm;
 
     const char *path;
@@ -21,11 +21,11 @@ typedef struct SlLexerState {
     uint32_t strsLen;
     uint32_t strsCap;
 
-    SlTokenList tokens;
+    Tokens tokens;
 
     uint32_t pos;
     uint32_t line;
-} SlLexerState;
+} LexerState;
 
 static const struct {
     char *str;
@@ -36,12 +36,12 @@ static const struct {
 };
 static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
 
-static void setError(SlLexerState *l, const char *fmt, ...);
-static bool appendToken(SlLexerState *l, SlToken token);
-static bool appendSimpleToken(SlLexerState *l, SlTokenKind kind);
-static uint32_t appendStr(SlLexerState *l, uint8_t *str, uint32_t len);
-static bool appendNumber(SlLexerState *l);
-static bool appendIdent(SlLexerState *l);
+static void setError(LexerState *l, const char *fmt, ...);
+static bool appendToken(LexerState *l, SlToken token);
+static bool appendSimpleToken(LexerState *l, SlTokenKind kind);
+static uint32_t appendStr(LexerState *l, uint8_t *str, uint32_t len);
+static bool appendNumber(LexerState *l);
+static bool appendIdent(LexerState *l);
 
 const char *slTokenKindToStr(SlTokenKind kind) {
     switch (kind) {
@@ -92,7 +92,7 @@ const char *slTokenKindToStr(SlTokenKind kind) {
 }
 
 SlTokens slTokenize(SlVM *vm, SlSource *source) {
-    SlLexerState l = {
+    LexerState l = {
         .vm = vm,
         .path = source->path,
         .text = source->text,
@@ -176,7 +176,7 @@ SlTokens slTokenize(SlVM *vm, SlSource *source) {
     };
 }
 
-static void setError(SlLexerState *l, const char *fmt, ...) {
+static void setError(LexerState *l, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     char buf[64];
@@ -185,7 +185,7 @@ static void setError(SlLexerState *l, const char *fmt, ...) {
     slSetError(l->vm, "%s:%"PRIu32": %s", l->path, l->line, buf);
 }
 
-static bool appendToken(SlLexerState *l, SlToken token) {
+static bool appendToken(LexerState *l, SlToken token) {
     if (!tokensPush(&l->tokens, token)) {
         slSetOutOfMemoryError(l->vm);
         return false;
@@ -193,11 +193,21 @@ static bool appendToken(SlLexerState *l, SlToken token) {
     return true;
 }
 
-static bool appendSimpleToken(SlLexerState *l, SlTokenKind kind) {
+static bool appendSimpleToken(LexerState *l, SlTokenKind kind) {
     return appendToken(l, (SlToken){ .kind = kind, .line = l->line });
 }
 
-static uint32_t appendStr(SlLexerState *l, uint8_t *str, uint32_t len) {
+static uint32_t appendStr(LexerState *l, uint8_t *str, uint32_t len) {
+    for (uint32_t i = 0; i + len <= l->strsLen; i++) {
+        for (uint32_t j = 0; j < len; j++) {
+            if (l->strs[i + j] != str[j]) {
+                goto outerContinue;
+            }
+        }
+        return i;
+outerContinue:
+    }
+
     if (l->strsLen + len > l->strsCap) {
         uint32_t newCap = (len + l->strsLen) * 2;
         uint8_t *newStrs = memChange(l->strs, newCap, sizeof(*l->strs));
@@ -214,7 +224,7 @@ static uint32_t appendStr(SlLexerState *l, uint8_t *str, uint32_t len) {
     return outIdx;
 }
 
-static bool appendNumber(SlLexerState *l) {
+static bool appendNumber(LexerState *l) {
     int64_t n = 0;
     uint32_t pos = l->pos;
     while (l->pos < l->len && isdigit(l->text[l->pos])) {
@@ -228,7 +238,7 @@ static bool appendNumber(SlLexerState *l) {
     );
 }
 
-static bool appendIdent(SlLexerState *l) {
+static bool appendIdent(LexerState *l) {
     uint32_t start = l->pos;
     uint32_t line = l->line;
 

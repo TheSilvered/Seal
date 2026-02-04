@@ -10,6 +10,7 @@ typedef enum SlNodeKind {
     SlNode_VarDeclr,
     SlNode_BinOp,
     SlNode_NumInt,
+    SlNode_Access
 } SlNodeKind;
 
 typedef enum SlBinOp {
@@ -32,8 +33,12 @@ typedef struct SlNode {
             SlNodeIdx value;
         } varDeclr;
         struct {
+            uint32_t nameIdx, nameLen;
+        } access;
+        struct {
             SlNodeIdx *nodes;
             uint32_t nodeCount;
+            uint32_t varCount;
         } block;
         struct {
             SlNodeIdx lhs, rhs;
@@ -50,7 +55,7 @@ typedef struct SlAst {
     SlNodeIdx root;
 } SlAst;
 
-SlAst slParse(SlVM *vm, SlSourceHandle sourceHd);
+SlAst slParse(SlVM *vm, SlSource *source);
 void slPrintAst(const SlAst *ast);
 
 #endif // !SL_PARSER_H_

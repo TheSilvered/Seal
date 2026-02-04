@@ -104,13 +104,19 @@ typedef struct SlLineInfo {
     uint32_t line;
 } SlLineInfo;
 
+typedef struct SlDebugInfo {
+    SlLineInfo *lineInfo;
+    size_t lineInfoCount;
+    uint8_t **slotNames;
+    uint16_t nameCount;
+} SlDebugInfo;
+
 struct SlBytecode {
     SlGCObj asGCObj;
     uint8_t *bytes;
     size_t size;
     SlStr *path;
-    SlLineInfo *lineInfo;
-    size_t lineInfoCount;
+    SlDebugInfo *debugInfo;
     SlObj *constants;
 };
 

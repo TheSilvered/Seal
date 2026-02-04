@@ -57,5 +57,6 @@
     }
 
 slArrayType(int32_t, i32Arr, i32)
+slArrayType(uint8_t, u8Arr, u8)
 
 #endif // !SL_ARRAY_H_
