@@ -58,7 +58,7 @@ typedef struct SlObj {
         SlStr *str;
         SlMap *map;
         SlFunc *func;
-        SlStruct *structure;
+        SlGCObj *structure;
         SlBytecode *bytecode;
         SlSharedSlots *sharedSlots;
     } as;
@@ -91,11 +91,6 @@ struct SlFunc {
     SlStr *name;
     SlBytecode *bytecode;
     SlSharedSlots *sharedSlots;
-};
-
-struct SlStruct {
-    SlGCObj asGCObj;
-    uint64_t value;
 };
 
 typedef struct SlLineInfo {

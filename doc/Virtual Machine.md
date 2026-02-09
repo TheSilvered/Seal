@@ -34,3 +34,8 @@ If the argument is one byte long the value is mapped directly, otherwise if
 `b1` and `b2` are the two bytes the actual value is
 `(((b1 & 0x7F) << 8) | b2) + 0x80` putting the maximum amount of stack slots
 at 32895 (`2^15 + 127`) per function call.
+
+Jump instructions have their argument as a 32-bit where `pc += arg`.
+Constants use a 32-bit unsigned integer.
+
+All integers are stored in **big-endian**.
