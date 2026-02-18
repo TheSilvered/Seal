@@ -31,14 +31,15 @@ typedef enum SlTokenKind {
     SlToken_Eof
 } SlTokenKind;
 
+typedef struct SlStrIdx {
+    uint32_t idx, len;
+} SlStrIdx;
+
 typedef struct SlToken {
     SlTokenKind kind;
     uint32_t line;
     union {
-        struct {
-            uint32_t strIdx;
-            uint32_t len;
-        } ident;
+        SlStrIdx ident;
         int64_t numInt;
     } as;
 } SlToken;

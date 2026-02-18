@@ -35,6 +35,7 @@ static void printBlock(SlNode node, const SlAst *ast, uint32_t indent);
 static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent);
 static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
 static void printNumInt(SlNode node, uint32_t indent);
+static void printAccess(SlNode node, const SlAst *ast, uint32_t indent);
 
 void slPrintAst(const SlAst *ast) {
     printNode(ast->root, ast, 0);
@@ -57,6 +58,8 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
     case SlNode_NumInt:
         printNumInt(node, indent);
         break;
+    case SlNode_Access:
+        printAccess(node, ast, indent);
     }
 }
 
@@ -69,10 +72,10 @@ static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
 
 static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent) {
     printf(
-        "%*svar '%.*s'\n",
+        "%*svar %.*s =\n",
         indent * INDENT_WIDTH, "",
-        node.as.varDeclr.nameLen,
-        (char *)&ast->strs[node.as.varDeclr.nameIdx]
+        node.as.varDeclr.name.len,
+        (char *)&ast->strs[node.as.varDeclr.name.idx]
     );
     printNode(node.as.varDeclr.value, ast, indent + 1);
 }
@@ -106,6 +109,15 @@ static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent) {
 
 static void printNumInt(SlNode node, uint32_t indent) {
     printf("%*s%"PRIi64" (int)\n", indent * INDENT_WIDTH, "", node.as.numInt);
+}
+
+static void printAccess(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf(
+        "%*s%.*s (access)\n",
+        indent * INDENT_WIDTH, "",
+        node.as.varDeclr.name.len,
+        (char *)&ast->strs[node.as.varDeclr.name.idx]
+    );
 }
 
 SlAst slParse(SlVM *vm, SlSource *source) {
@@ -186,7 +198,6 @@ static bool expectNext(ParserState *p, SlTokenKind kind) {
 
 SlNodeIdx parseFile(ParserState *p) {
     i32Arr nodes = { 0 };
-    uint32_t varCount = 0;
     while (token(p).kind != SlToken_Eof) {
         SlNodeIdx idx = parseStatement(p);
         if (idx == -1) {
@@ -197,12 +208,6 @@ SlNodeIdx parseFile(ParserState *p) {
             i32Clear(&nodes);
             slSetOutOfMemoryError(p->vm);
             return -1;
-        }
-
-        if (p->nodes.data[idx].kind == SlNode_VarDeclr) {
-            varCount++;
-        } else if (p->nodes.data[idx].kind == SlNode_Block) {
-            varCount += p->nodes.data[idx].as.block.varCount;
         }
     }
     SlNodeIdx node = addNode(
@@ -246,7 +251,7 @@ SlNodeIdx parseVarDeclr(ParserState *p) {
         return -1;
     }
 
-    uint32_t nameIdx = token(p).as.ident.strIdx;
+    uint32_t nameIdx = token(p).as.ident.idx;
     uint32_t nameLen = token(p).as.ident.len;
     next(p);
 
@@ -269,8 +274,8 @@ SlNodeIdx parseVarDeclr(ParserState *p) {
             .kind = SlNode_VarDeclr,
             .line = line,
             .as.varDeclr = {
-                .nameIdx = nameIdx,
-                .nameLen = nameLen,
+                .name.idx = nameIdx,
+                .name.len = nameLen,
                 .value = value
             }
         }
@@ -396,8 +401,8 @@ static SlNodeIdx parseValue(ParserState *p) {
             (SlNode){
                 .kind = SlNode_Access,
                 .line = tok.line,
-                .as.access.nameIdx = tok.as.ident.strIdx,
-                .as.access.nameLen = tok.as.ident.len
+                .as.access.idx = tok.as.ident.idx,
+                .as.access.len = tok.as.ident.len
             }
         );
     }

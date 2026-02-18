@@ -1,6 +1,7 @@
 #ifndef SL_VM_H_
 #define SL_VM_H_
 
+#include <stdarg.h>
 #include "sl_object.h"
 
 typedef struct SlSource {

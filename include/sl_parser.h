@@ -18,8 +18,8 @@ typedef enum SlBinOp {
     SlBinOp_Sub,
     SlBinOp_Mul,
     SlBinOp_Div,
-    SlBinOp_Pow,
-    SlBinOp_Mod
+    SlBinOp_Mod,
+    SlBinOp_Pow
 } SlBinOp;
 
 typedef int32_t SlNodeIdx;
@@ -29,16 +29,13 @@ typedef struct SlNode {
     uint32_t line;
     union {
         struct {
-            uint32_t nameIdx, nameLen;
+            SlStrIdx name;
             SlNodeIdx value;
         } varDeclr;
-        struct {
-            uint32_t nameIdx, nameLen;
-        } access;
+        SlStrIdx access;
         struct {
             SlNodeIdx *nodes;
             uint32_t nodeCount;
-            uint32_t varCount;
         } block;
         struct {
             SlNodeIdx lhs, rhs;

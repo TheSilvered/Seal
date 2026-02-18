@@ -10,6 +10,7 @@ include_directories(seal include)
 add_library(seal
     src/clib_mem.c
     src/sl_array.c
+    src/sl_codegen.c
     src/sl_lexer.c
     src/sl_object.c
     src/sl_parser.c

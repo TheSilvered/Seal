@@ -41,7 +41,8 @@
         if (idx < 0 || idx >= arr->len) {                                      \
             fprintf(                                                           \
                 stderr,                                                        \
-                "index %lli out of bounds (length %"PRIu32") for" #name "\n",  \
+                "index %"PRIi64" out of bounds (length %"PRIu32") for "        \
+                #name "\n",                                                    \
                 idx, arr->len                                                  \
             );                                                                 \
             fflush(stderr);                                                    \

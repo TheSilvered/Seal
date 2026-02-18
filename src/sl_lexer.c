@@ -205,7 +205,7 @@ static uint32_t appendStr(LexerState *l, uint8_t *str, uint32_t len) {
             }
         }
         return i;
-outerContinue:
+outerContinue:;
     }
 
     if (l->strsLen + len > l->strsCap) {
@@ -273,7 +273,7 @@ static bool appendIdent(LexerState *l) {
             .kind = SlToken_Ident,
             .line = line,
             .as.ident.len =  len,
-            .as.ident.strIdx = strIdx
+            .as.ident.idx = strIdx
         }
     );
 }

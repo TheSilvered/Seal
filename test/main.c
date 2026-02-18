@@ -5,12 +5,10 @@
 
 int main(void) {
     SlVM vm = { 0 };
-    SlSource src = slSourceFromCStr("var hello = 3 + 4;");
-    SlAst ast = slParse(&vm, &src);
+    SlSource src = slSourceFromCStr("var a = a + 3;");
+    slGenCode(&vm, &src);
     if (vm.error.occurred) {
         printf("%s\n", vm.error.msg);
-    } else {
-        slPrintAst(&ast);
     }
     return 0;
 }
