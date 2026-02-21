@@ -78,6 +78,71 @@ static void printU32(GenState *g, uint32_t *i) {
     printf("%"PRId32, (int32_t)val);
 }
 
+static void printInst(
+    GenState *g,
+    uint32_t *i,
+    const char *name,
+    const char *args
+) {
+    printf("%s", name);
+    while (*args) {
+        char c = *args++;
+        putchar('\t');
+        switch (c) {
+        case 'r':
+            printReg(g, i);
+            break;
+        case 'b':
+            printf("%"PRIx8, g->bytecode.data[++*i]);
+            break;
+        case 'i':
+            printU32(g, i);
+            break;
+        default:
+            assert(false && "bad args format");
+        }
+    }
+    putchar('\n');
+}
+
+static void printBytecode(GenState *g) {
+    u8Arr bytecode = g->bytecode;
+    for (uint32_t i = 0; i < bytecode.len; i++) {
+        switch (bytecode.data[i]) {
+        case SlOp_nop:
+            printInst(g, &i, "nop", "");
+            break;
+        case SlOp_ldi8:
+            printInst(g, &i, "ldi8", "rb");
+            break;
+        case SlOp_ldk:
+            printInst(g, &i, "ld", "ri");
+            break;
+        case SlOp_cpy:
+            printInst(g, &i, "cpy", "rr");
+            break;
+        case SlOp_add:
+            printInst(g, &i, "add", "rrr");
+            break;
+        case SlOp_sub:
+            printInst(g, &i, "sub", "rrr");
+            break;
+        case SlOp_mul:
+            printInst(g, &i, "mul", "rrr");
+            break;
+        case SlOp_div:
+            printInst(g, &i, "div", "rrr");
+            break;
+        case SlOp_mod:
+            printInst(g, &i, "mod", "rrr");
+            break;
+        case SlOp_pow:
+            printInst(g, &i, "pow", "rrr");
+            break;
+        }
+    }
+}
+
 // ==================
 
 SlObj slGenCode(SlVM *vm, SlSource *source) {
@@ -86,6 +151,9 @@ SlObj slGenCode(SlVM *vm, SlSource *source) {
         .bytecode = { 0 },
         .consts = { 0 },
         .varsTop = NULL,
+        .outReg = -1,
+        .usedStack = 0,
+        .maxStackSize = 0
     };
     g.ast = slParse(vm, source);
     if (vm->error.occurred) {
@@ -96,86 +164,7 @@ SlObj slGenCode(SlVM *vm, SlSource *source) {
         return slNull;
     }
 
-    for (uint32_t i = 0; i < g.bytecode.len; i++) {
-        switch (g.bytecode.data[i]) {
-        case SlOp_nop:
-            puts("nop\n");
-            break;
-        case SlOp_ldi8:
-            printf("ldi8\t");
-            printReg(&g, &i);
-            printf("\t%u\n", g.bytecode.data[++i]);
-            break;
-        case SlOp_ldk:
-            printf("ldk\t");
-            printReg(&g, &i);
-            putchar('\t');
-            printU32(&g, &i);
-            putchar('\n');
-            break;
-        case SlOp_cpy:
-            printf("cpy\t");
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\n');
-            break;
-        case SlOp_add:
-            printf("add\t");
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\n');
-            break;
-        case SlOp_sub:
-            printf("sub\t");
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\n');
-            break;
-        case SlOp_mul:
-            printf("mul\t");
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\n');
-            break;
-        case SlOp_div:
-            printf("div\t");
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\n');
-            break;
-        case SlOp_mod:
-            printf("mod\t");
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\n');
-            break;
-        case SlOp_pow:
-            printf("pow\t");
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\t');
-            printReg(&g, &i);
-            putchar('\n');
-            break;
-        }
-    }
+    printBytecode(&g);
 
     return slNull;
 }
@@ -347,6 +336,7 @@ static bool genStatement(GenState *g, SlNodeIdx nodeIdx) {
         return true;
     default:
         assert(false && "unhandled note kind");
+        return false;
     }
 }
 
