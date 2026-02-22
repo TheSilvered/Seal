@@ -100,6 +100,7 @@ typedef struct SlLineInfo {
 } SlLineInfo;
 
 typedef struct SlDebugInfo {
+    SlStr *path;
     SlLineInfo *lineInfo;
     size_t lineInfoCount;
     uint8_t **slotNames;
@@ -110,9 +111,9 @@ struct SlBytecode {
     SlGCObj asGCObj;
     uint8_t *bytes;
     size_t size;
-    SlStr *path;
-    SlDebugInfo *debugInfo;
+    uint16_t frameSize;
     SlObj *constants;
+    SlDebugInfo *debugInfo;
 };
 
 struct SlSharedSlots {
