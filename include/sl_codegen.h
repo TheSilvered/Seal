@@ -2,7 +2,7 @@
 #define SL_CODEGEN_H_
 
 #include "sl_parser.h"
-#include "sl_object.h"
+#include "sl_vm.h"
 
 // Format:
 // parameter_name(number_of_bytes)

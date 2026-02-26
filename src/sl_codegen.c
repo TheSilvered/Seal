@@ -2,8 +2,6 @@
 
 #include "sl_array.h"
 #include "sl_codegen.h"
-#include "sl_parser.h"
-#include "sl_object.h"
 
 #define _maxRegs ((1 << 15) + 0x80 - 1)
 #define _strFmt(str) (int)(str).len, (char *)(g->ast.strs + (str).idx)
@@ -146,6 +144,8 @@ static void printBytecode(GenState *g) {
 // ==================
 
 SlObj slGenCode(SlVM *vm, SlSource *source) {
+    SlObj result = slNull;
+
     GenState g = {
         .vm = vm,
         .bytecode = { 0 },
@@ -157,16 +157,53 @@ SlObj slGenCode(SlVM *vm, SlSource *source) {
     };
     g.ast = slParse(vm, source);
     if (vm->error.occurred) {
-        return slNull;
+        goto exit;
     }
 
     if (!genStatement(&g, g.ast.root)) {
-        return slNull;
+        goto exit;
     }
 
-    printBytecode(&g);
+    SlBytecode *bc = slBytecodeNew(
+        vm,
+        g.bytecode.data,
+        g.bytecode.len,
+        g.maxStackSize,
+        g.consts.data,
+        g.consts.len,
+        NULL
+    );
+    if (bc == NULL) {
+        goto exit;
+    }
 
-    return slNull;
+    SlStr *funcName = slFrozenStrNew(
+        vm,
+        (uint8_t *)source->path,
+        strlen(source->path)
+    );
+    if (funcName == NULL) {
+        goto exit;
+    }
+
+    SlFunc *mainFunc = slFrozenFuncNew(vm, funcName, bc);
+    if (mainFunc == NULL) {
+        goto exit;
+    }
+
+    result = (SlObj){
+        .type = SlObj_FrozenFunc,
+        .as.func = mainFunc
+    };
+
+exit:
+    u8Clear(&g.bytecode);
+    constsClear(&g.consts);
+    while (g.varsTop != NULL) {
+        popVarTable(&g);
+    }
+
+    return result;
 }
 
 static uint16_t getFreeReg(GenState *g) {
@@ -261,11 +298,15 @@ static bool addVar(GenState *g, uint16_t reg, SlStrIdx var) {
 }
 
 static int32_t getVar(GenState *g, SlStrIdx var) {
-    Variables *vars = &g->varsTop->vars;
-    for (uint32_t i = 0; i < g->varsTop->vars.len; i++) {
-        if (strsEq(g, vars->data[i].name, var)) {
-            return vars->data[i].reg;
+    VarTable *table = g->varsTop;
+    while (table != NULL) {
+        Variables *vars = &g->varsTop->vars;
+        for (uint32_t i = 0; i < g->varsTop->vars.len; i++) {
+            if (strsEq(g, vars->data[i].name, var)) {
+                return vars->data[i].reg;
+            }
         }
+        table = table->parent;
     }
     slSetError(g->vm, "unknown variable '%.*s'", _strFmt(var));
     return -1;

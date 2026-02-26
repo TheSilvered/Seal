@@ -9,6 +9,18 @@
 
 #define _blockMinCapacity 512 // 8 KiB blocks
 
+SlSource slSourceFromCStr(const char *str) {
+    size_t len = strlen(str);
+    if (len > UINT32_MAX) {
+        len = UINT32_MAX;
+    }
+    return (SlSource) {
+        .path = "<string>",
+        .text = (uint8_t *)str,
+        .textLen = len
+    };
+}
+
 SlObj *slPushSlots(SlVM *vm, uint16_t count) {
     assert(count != 0);
 
@@ -45,16 +57,95 @@ void slPopSlots(SlVM *vm, uint16_t count) {
     vm->stackTop->used -= count;
 }
 
-SlSource slSourceFromCStr(const char *str) {
-    size_t len = strlen(str);
-    if (len > UINT32_MAX) {
-        len = UINT32_MAX;
-    }
-    return (SlSource) {
-        .path = "<string>",
-        .text = (uint8_t *)str,
-        .textLen = len
+SlObj slObjInt(uint64_t value) {
+    return (SlObj) {
+        .type = SlObj_Int,
+        .as.numInt = value
     };
+}
+
+SlObj slObjFloat(double value) {
+    return (SlObj) {
+        .type = SlObj_Int,
+        .as.numFloat = value
+    };
+}
+
+SlStr *slFrozenStrNew(
+    SlVM *vm,
+    const uint8_t *bytes,
+    size_t len
+) {
+    SlStr *str = memAllocBytes(sizeof(*str) + len * sizeof(*bytes));
+    if (str == NULL) {
+        slSetOutOfMemoryError(vm);
+        return NULL;
+    }
+
+    str->asGCObj.refCount = 1;
+    str->bytes = (uint8_t *)(str + 1);
+    str->len = len;
+    str->cap = 0;
+    memcpy(str->bytes, bytes, len * sizeof(*bytes));
+
+    return str;
+}
+
+SlFunc *slFrozenFuncNew(
+    SlVM *vm,
+    SlStr *name,
+    SlBytecode *bytecode
+) {
+    SlFunc *func = memAlloc(1, sizeof(*func));
+    if (func == NULL) {
+        slSetOutOfMemoryError(vm);
+        return NULL;
+    }
+
+    func->asGCObj.refCount = 1;
+    func->name = name;
+    func->bytecode = bytecode;
+    func->sharedSlots = NULL;
+
+    return func;
+}
+
+SlBytecode *slBytecodeNew(
+    SlVM *vm,
+    uint8_t *bytes,
+    uint32_t size,
+    uint16_t frameSize,
+    SlObj *constants,
+    uint32_t constantCount,
+    SlDebugInfo *debugInfo
+) {
+    // Object layout:
+    // | SlBytecode struct |
+    // | Constants array   |
+    // | Bytecode          |
+    SlBytecode *bc = memAllocBytes(
+        sizeof(*bc)
+        + sizeof(*constants) * constantCount
+        + sizeof(*bytes) * size
+    );
+
+    if (bc == NULL) {
+        slSetOutOfMemoryError(vm);
+        return NULL;
+    }
+
+    bc->asGCObj.refCount = 1;
+    bc->bytes = (uint8_t *)(bc + 1) + (sizeof(*constants) * constantCount);
+    bc->size = size;
+    bc->frameSize = frameSize;
+    bc->constants = (SlObj *)(bc + 1);
+    bc->constantCount = constantCount;
+    bc->debugInfo = debugInfo;
+
+    memcpy(bc->bytes, bytes, size * sizeof(*bytes));
+    memcpy(bc->constants, constants, constantCount * sizeof(*constants));
+
+    return bc;
 }
 
 void slSetOutOfMemoryError(SlVM *vm) {
