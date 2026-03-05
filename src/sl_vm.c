@@ -112,12 +112,12 @@ SlFunc *slFrozenFuncNew(
 
 SlBytecode *slBytecodeNew(
     SlVM *vm,
-    uint8_t *bytes,
+    const uint8_t *bytes,
     uint32_t size,
     uint16_t frameSize,
-    SlObj *constants,
+    const SlObj *constants,
     uint32_t constantCount,
-    SlDebugInfo *debugInfo
+    const SlDebugInfo *debugInfo
 ) {
     // Object layout:
     // | SlBytecode struct |

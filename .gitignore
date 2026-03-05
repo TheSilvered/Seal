@@ -2,4 +2,4 @@
 .vs/
 build/
 compile_commands.json
-
+.DS_Store

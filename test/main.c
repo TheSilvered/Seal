@@ -5,7 +5,7 @@
 
 int main(void) {
     SlVM vm = { 0 };
-    SlSource src = slSourceFromCStr("var a = 2 + 3;");
+    SlSource src = slSourceFromCStr("var a = 2 + 3; var b = c*3;");
     slGenCode(&vm, &src);
     if (vm.error.occurred) {
         printf("%s\n", vm.error.msg);

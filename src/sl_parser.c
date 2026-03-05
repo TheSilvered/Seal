@@ -139,12 +139,15 @@ SlAst slParse(SlVM *vm, SlSource *source) {
         return (SlAst){ .root = -1 };
     }
     memFree(p.tokens.tokens);
-    return (SlAst){
+
+    SlAst ast = {
         .strs = p.tokens.strs,
         .nodes = p.nodes.data,
         .nodeCount = p.nodes.len,
         .root = root
     };
+    printNode(ast.root, &ast, 0);
+    return ast;
 }
 
 static void setError(ParserState *p, const char *fmt, ...) {
@@ -323,7 +326,7 @@ static SlNodeIdx parseMul(ParserState *p) {
     if (lhs == -1) {
         return -1;
     }
-    
+
     for (
         SlTokenKind kind = token(p).kind;
         kind == SlToken_Star || kind == SlToken_FwSlash || kind == SlToken_Perc;

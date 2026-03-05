@@ -113,7 +113,7 @@ struct SlBytecode {
     uint16_t frameSize;
     uint32_t constantCount;
     SlObj *constants;
-    SlDebugInfo *debugInfo;
+    const SlDebugInfo *debugInfo;
 };
 
 typedef struct SlSource {

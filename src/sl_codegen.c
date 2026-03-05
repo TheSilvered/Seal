@@ -196,6 +196,8 @@ SlObj slGenCode(SlVM *vm, SlSource *source) {
         .as.func = mainFunc
     };
 
+    printBytecode(&g);
+
 exit:
     u8Clear(&g.bytecode);
     constsClear(&g.consts);
