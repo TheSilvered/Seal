@@ -110,6 +110,9 @@ static void printBytecode(GenState *g) {
         case SlOp_nop:
             printInst(g, &i, "nop", "");
             break;
+        case SlOp_ldnull:
+            printInst(g, &i, "ldnull", "r");
+            break;
         case SlOp_ldi8:
             printInst(g, &i, "ldi8", "rb");
             break;
@@ -137,6 +140,11 @@ static void printBytecode(GenState *g) {
         case SlOp_pow:
             printInst(g, &i, "pow", "rrr");
             break;
+        case SlOp_ret:
+            printInst(g, &i, "ret", "r");
+            break;
+        default:
+            assert(false && "unknown op");
         }
     }
 }
@@ -164,7 +172,14 @@ SlObj slGenCode(SlVM *vm, SlSource *source) {
         goto exit;
     }
 
-    SlBytecode *bc = slBytecodeNew(
+    uint16_t reg = getFreeReg(&g);
+    if (!pushOp(&g, SlOp_ldnull) || !pushReg(&g, reg)
+        || !pushOp(&g, SlOp_ret) || !pushReg(&g, reg)
+    ) {
+        goto exit;
+    }
+
+    SlObj bc = slBytecodeNew(
         vm,
         g.bytecode.data,
         g.bytecode.len,
@@ -173,28 +188,20 @@ SlObj slGenCode(SlVM *vm, SlSource *source) {
         g.consts.len,
         NULL
     );
-    if (bc == NULL) {
+    if (bc.type == SlObj_Null) {
         goto exit;
     }
 
-    SlStr *funcName = slFrozenStrNew(
+    SlObj funcName = slFrozenStrNew(
         vm,
         (uint8_t *)source->path,
         strlen(source->path)
     );
-    if (funcName == NULL) {
+    if (funcName.type == SlObj_Null) {
         goto exit;
     }
 
-    SlFunc *mainFunc = slFrozenFuncNew(vm, funcName, bc);
-    if (mainFunc == NULL) {
-        goto exit;
-    }
-
-    result = (SlObj){
-        .type = SlObj_FrozenFunc,
-        .as.func = mainFunc
-    };
+    result = slFrozenFuncNew(vm, funcName, bc);
 
     printBytecode(&g);
 

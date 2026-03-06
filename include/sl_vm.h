@@ -6,22 +6,31 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#include "sl_array.h"
+
+#define slObjIsSmall(obj) ((obj).type <= SlObj_Float)
+
 typedef enum SlObjType {
+    // Small objects (not tracked by gc)
+
     SlObj_Null,
+    SlObj_EmptySlot, // internal
     SlObj_Bool,
     SlObj_Int,
     SlObj_Float,
-    SlObj_List,
+
+    // Acyclic objects (tracked by the gc but cannot contain themselves)
+
     SlObj_Str,
+    SlObj_Bytecode, // internal
+
+    // Cyclic objects (objects that can contain themselves)
+
+    SlObj_List,
     SlObj_Map,
     SlObj_Func,
     SlObj_Struct,
-
-    // Internal types
-
-    SlObj_Bytecode,
-    SlObj_SharedSlots,
-    SlObj_EmptySlot,
+    SlObj_SharedSlots, // internal
 
     // Frozen types
 
@@ -48,7 +57,7 @@ typedef struct SlGCObj {
 
 typedef struct SlObj {
     uint32_t type;
-    uint32_t mtIdx; // method table index
+    uint32_t reserved;
     union {
         SlBool boolean;
         SlInt numInt;
@@ -57,9 +66,10 @@ typedef struct SlObj {
         SlStr *str;
         SlMap *map;
         SlFunc *func;
-        SlGCObj *structure;
+        SlStruct *structure;
         SlBytecode *bytecode;
         SlSharedSlots *sharedSlots;
+        SlGCObj *gcObj;
     } as;
 } SlObj;
 
@@ -90,6 +100,18 @@ struct SlFunc {
     SlStr *name;
     SlBytecode *bytecode;
     SlSharedSlots *sharedSlots;
+};
+
+typedef struct SlMethodTable {
+    struct SlMethodTable *nextMt;
+
+    SlObj (*type)(void);
+    void (*destructor)(void *gcObj);
+} SlMethodTable;
+
+struct SlStruct {
+    SlGCObj asGCObj;
+    SlMethodTable *mt;
 };
 
 typedef struct SlLineInfo {
@@ -128,23 +150,42 @@ typedef struct SlStackBlock {
     SlObj slots[1];
 } SlStackBlock;
 
+typedef struct SlCallFrame {
+    SlFunc *func;
+    uint64_t pc;
+    SlObj *retAddress;
+} SlCallFrame;
+
+#define slCallStackCap 32
+
+typedef struct SlCallStackBlock {
+    struct SlCallStackBlock *prev;
+    SlCallFrame frames[slCallStackCap];
+    uint64_t used;
+} SlCallStackBlock;
+
+typedef struct SlCallStack {
+    SlCallStackBlock *top;
+    uint64_t totalUsed;
+} SlCallStack;
+
 typedef struct SlVM {
     struct {
         bool occurred;
         char msg[512];
     } error;
+    SlMethodTable *mtTop;
     SlStackBlock *stackTop;
+    SlCallStack callStack;
+    uint64_t pc;
+    SlBytecode *bytecode;
+    SlSharedSlots *sharedSlots;
+    SlObj *stackPtr;
 } SlVM;
 
 // Create a source from a C string. No memory is allocated.
 // The length is capped at UINT32_MAX even if the string is longer.
 SlSource slSourceFromCStr(const char *str);
-
-// Add `count` slots to the stack and return a pointer to the first.
-SlObj *slPushSlots(SlVM *vm, uint16_t count);
-// Remove `count` slots from the stack. Each call must undo a previous
-// `slPushSlots` call with the same number of slots.
-void slPopSlots(SlVM *vm, uint16_t count);
 
 struct SlSharedSlots {
     SlGCObj asGCObj;
@@ -154,18 +195,15 @@ struct SlSharedSlots {
 
 #define slNull ((SlObj){                                                       \
         .type = SlObj_Null,                                                    \
-        .mtIdx = 0                                                             \
     })
 
 #define slTrue ((SlObj){                                                       \
         .type = SlObj_Bool,                                                    \
-        .mtIdx = 0,                                                            \
         .as.boolean = true                                                     \
     })
 
 #define slFalse ((SlObj){                                                      \
         .type = SlObj_Bool,                                                    \
-        .mtIdx = 0,                                                            \
         .as.boolean = false                                                    \
     })
 
@@ -175,7 +213,7 @@ SlObj slObjFloat(double value);
 // Create a new string object.
 // The contents of bytes are copied.
 // If an error occurs return NULL.
-SlStr *slFrozenStrNew(
+SlObj slFrozenStrNew(
     SlVM *vm,
     const uint8_t *bytes,
     size_t len
@@ -184,10 +222,10 @@ SlStr *slFrozenStrNew(
 // Create a new function object.
 // A reference is taken from name and bytecode.
 // If an error occurs return NULL.
-SlFunc *slFrozenFuncNew(
+SlObj slFrozenFuncNew(
     SlVM *vm,
-    SlStr *name,
-    SlBytecode *bytecode
+    SlObj name,
+    SlObj bytecode
 );
 
 // Create a new bytecode object.
@@ -195,7 +233,7 @@ SlFunc *slFrozenFuncNew(
 // from all objects in constants.
 // Ownership of debugInfo is transfered to the new object.
 // If an error occurs return NULL.
-SlBytecode *slBytecodeNew(
+SlObj slBytecodeNew(
     SlVM *vm,
     const uint8_t *bytes,
     uint32_t size,
@@ -204,6 +242,11 @@ SlBytecode *slBytecodeNew(
     uint32_t constantCount,
     const SlDebugInfo *debugInfo
 );
+
+// Get a new reference to an object.
+SlObj slNewRef(SlObj o);
+// Delete a reference of an object.
+void slDelRef(SlObj o);
 
 void slSetOutOfMemoryError(SlVM *vm);
 void slSetError(SlVM *vm, const char *fmt, ...);

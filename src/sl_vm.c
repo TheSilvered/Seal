@@ -7,7 +7,7 @@
 #include <limits.h>
 #include <assert.h>
 
-#define _blockMinCapacity 512 // 8 KiB blocks
+static inline void destroyObj(SlObj o);
 
 SlSource slSourceFromCStr(const char *str) {
     size_t len = strlen(str);
@@ -19,42 +19,6 @@ SlSource slSourceFromCStr(const char *str) {
         .text = (uint8_t *)str,
         .textLen = len
     };
-}
-
-SlObj *slPushSlots(SlVM *vm, uint16_t count) {
-    assert(count != 0);
-
-    SlStackBlock *top = vm->stackTop;
-    if (top == NULL || top->cap - top->used < count) {
-        uint16_t newCap = count > _blockMinCapacity ? count : _blockMinCapacity;
-        SlStackBlock *newBlock = memAllocBytes(
-            sizeof(*newBlock) + (newCap - 1) * sizeof(*newBlock->slots)
-        );
-        if (newBlock == NULL) {
-            slSetOutOfMemoryError(vm);
-            return NULL;
-        }
-        newBlock->prev = top;
-        newBlock->cap = newCap;
-        newBlock->used = 0;
-        vm->stackTop = newBlock;
-    }
-
-    SlObj *first = &top->slots[top->used];
-    top->used += count;
-    return first;
-}
-
-void slPopSlots(SlVM *vm, uint16_t count) {
-    assert(count != 0);
-    assert(vm->stackTop != NULL);
-    if (vm->stackTop->used == 0) {
-        SlStackBlock *block = vm->stackTop;
-        vm->stackTop = block->prev;
-        memFree(block);
-    }
-    assert(vm->stackTop->used >= count);
-    vm->stackTop->used -= count;
 }
 
 SlObj slObjInt(uint64_t value) {
@@ -71,7 +35,7 @@ SlObj slObjFloat(double value) {
     };
 }
 
-SlStr *slFrozenStrNew(
+SlObj slFrozenStrNew(
     SlVM *vm,
     const uint8_t *bytes,
     size_t len
@@ -79,7 +43,7 @@ SlStr *slFrozenStrNew(
     SlStr *str = memAllocBytes(sizeof(*str) + len * sizeof(*bytes));
     if (str == NULL) {
         slSetOutOfMemoryError(vm);
-        return NULL;
+        return slNull;
     }
 
     str->asGCObj.refCount = 1;
@@ -88,29 +52,29 @@ SlStr *slFrozenStrNew(
     str->cap = 0;
     memcpy(str->bytes, bytes, len * sizeof(*bytes));
 
-    return str;
+    return (SlObj){ .type = SlObj_FrozenStr, .as.str = str };
 }
 
-SlFunc *slFrozenFuncNew(
+SlObj slFrozenFuncNew(
     SlVM *vm,
-    SlStr *name,
-    SlBytecode *bytecode
+    SlObj name,
+    SlObj bytecode
 ) {
     SlFunc *func = memAlloc(1, sizeof(*func));
     if (func == NULL) {
         slSetOutOfMemoryError(vm);
-        return NULL;
+        return slNull;
     }
 
     func->asGCObj.refCount = 1;
-    func->name = name;
-    func->bytecode = bytecode;
+    func->name = name.as.str;
+    func->bytecode = bytecode.as.bytecode;
     func->sharedSlots = NULL;
 
-    return func;
+    return (SlObj){ .type = SlObj_FrozenFunc, .as.func = func };
 }
 
-SlBytecode *slBytecodeNew(
+SlObj slBytecodeNew(
     SlVM *vm,
     const uint8_t *bytes,
     uint32_t size,
@@ -131,7 +95,7 @@ SlBytecode *slBytecodeNew(
 
     if (bc == NULL) {
         slSetOutOfMemoryError(vm);
-        return NULL;
+        return slNull;
     }
 
     bc->asGCObj.refCount = 1;
@@ -145,7 +109,23 @@ SlBytecode *slBytecodeNew(
     memcpy(bc->bytes, bytes, size * sizeof(*bytes));
     memcpy(bc->constants, constants, constantCount * sizeof(*constants));
 
-    return bc;
+    return (SlObj){ .type = SlObj_Bytecode, .as.bytecode = bc };
+}
+
+SlObj slNewRef(SlObj obj) {
+    if (!slObjIsSmall(obj)) {
+        obj.as.gcObj->refCount++;
+    }
+    return obj;
+}
+
+void slDelRef(SlObj obj) {
+    if (!slObjIsSmall(obj)) {
+        obj.as.gcObj->refCount--;
+        if (obj.as.gcObj->refCount == 0) {
+            destroyObj(obj);
+        }
+    }
 }
 
 void slSetOutOfMemoryError(SlVM *vm) {
@@ -165,4 +145,82 @@ void slSetError(SlVM *vm, const char *fmt, ...) {
 void slSetErrorVArg(SlVM *vm, const char *fmt, va_list args) {
     vsnprintf(vm->error.msg, sizeof(vm->error.msg), fmt, args);
     vm->error.occurred = true;
+}
+
+static inline void destroyObj(SlObj o) {
+    switch (o.type & 0xff) {
+    case SlObj_Null:
+    case SlObj_EmptySlot:
+    case SlObj_Bool:
+    case SlObj_Int:
+    case SlObj_Float:
+        break;
+    case SlObj_Str:
+        if (o.as.str->cap != 0) {
+            memFree(o.as.str->bytes);
+        }
+        memFree(o.as.str);
+        break;
+    case SlObj_Bytecode:
+        for (uint32_t i = 0; i < o.as.bytecode->constantCount; i++) {
+            slDelRef(o.as.bytecode->constants[i]);
+        }
+        memFree(o.as.bytecode);
+        break;
+    case SlObj_List:
+        o.as.gcObj->refCount = SIZE_T_MAX;
+        for (size_t i = 0; i < o.as.list->len; i++) {
+            slDelRef(o.as.list->objs[i]);
+        }
+        if (o.as.list->cap != 0) {
+            memFree(o.as.list->objs);
+        }
+        memFree(o.as.list);
+        break;
+    case SlObj_Map:
+        o.as.gcObj->refCount = SIZE_T_MAX;
+        for (size_t i = 0; i < o.as.map->cap; i++) {
+            slDelRef(o.as.map->entries[i].key);
+            slDelRef(o.as.map->entries[i].value);
+        }
+        memFree(o.as.map->entries);
+        memFree(o.as.map);
+        break;
+    case SlObj_Func:
+        o.as.gcObj->refCount = SIZE_T_MAX;
+        slDelRef((SlObj){
+            .type = SlObj_FrozenStr,
+            .as.str = o.as.func->name
+        });
+        slDelRef((SlObj){
+            .type = SlObj_Bytecode,
+            .as.bytecode = o.as.func->bytecode
+        });
+        if (o.as.func->sharedSlots != NULL) {
+            slDelRef((SlObj){
+                .type = SlObj_SharedSlots,
+                .as.sharedSlots = o.as.func->sharedSlots
+            });
+        }
+        memFree(o.as.func);
+        break;
+    case SlObj_Struct:
+        o.as.gcObj->refCount = SIZE_T_MAX;
+        if (o.as.structure->mt != NULL
+            && o.as.structure->mt->destructor != NULL
+        ) {
+            o.as.structure->mt->destructor(o.as.structure);
+        }
+        memFree(o.as.structure);
+        break;
+    case SlObj_SharedSlots:
+        o.as.gcObj->refCount = SIZE_T_MAX;
+        for (size_t i = 0; i < o.as.sharedSlots->slotCount; i++) {
+            slDelRef(o.as.sharedSlots->slots[i]);
+        }
+        memFree(o.as.sharedSlots);
+        break;
+    default:
+        assert(false && "unknown type");
+    }
 }
