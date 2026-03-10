@@ -21,7 +21,7 @@ SlSource slSourceFromCStr(const char *str) {
     };
 }
 
-SlObj slObjInt(uint64_t value) {
+SlObj slObjInt(int64_t value) {
     return (SlObj) {
         .type = SlObj_Int,
         .as.numInt = value
@@ -125,6 +125,46 @@ void slDelRef(SlObj obj) {
         if (obj.as.gcObj->refCount == 0) {
             destroyObj(obj);
         }
+    }
+}
+
+const char *slTypeName(SlObj o) {
+    switch (o.type) {
+    case SlObj_Null:
+        return "Null";
+    case SlObj_EmptySlot:
+        return "internal:EmptySlot";
+    case SlObj_Bool:
+        return "Bool";
+    case SlObj_Int:
+        return "Int";
+    case SlObj_Float:
+        return "Float";
+    case SlObj_Str:
+        return "Str";
+    case SlObj_Bytecode:
+        return "internal:Bytecode";
+    case SlObj_List:
+        return "List";
+    case SlObj_Map:
+        return "Map";
+    case SlObj_Func:
+        return "Func";
+    case SlObj_Struct:
+        return "Struct";
+    case SlObj_SharedSlots:
+        return "internal:SharedSlots";
+    case SlObj_FrozenStr:
+        return "Str*";
+    case SlObj_FrozenList:
+        return "List*";
+    case SlObj_FrozenMap:
+        return "Map*";
+    case SlObj_FrozenFunc:
+        return "Func*";
+    default:
+        assert(false && "unreachable");
+        return "<invalid>";
     }
 }
 

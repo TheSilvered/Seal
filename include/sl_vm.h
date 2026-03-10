@@ -9,6 +9,8 @@
 #include "sl_array.h"
 
 #define slObjIsSmall(obj) ((obj).type <= SlObj_Float)
+#define slObjIsNumeric(obj)                                                    \
+    ((obj).type == SlObj_Int || (obj).type == SlObj_Float)
 
 typedef enum SlObjType {
     // Small objects (not tracked by gc)
@@ -207,7 +209,7 @@ struct SlSharedSlots {
         .as.boolean = false                                                    \
     })
 
-SlObj slObjInt(uint64_t value);
+SlObj slObjInt(int64_t value);
 SlObj slObjFloat(double value);
 
 // Create a new string object.
@@ -247,6 +249,9 @@ SlObj slBytecodeNew(
 SlObj slNewRef(SlObj o);
 // Delete a reference of an object.
 void slDelRef(SlObj o);
+
+// Get the name of a type.
+const char *slTypeName(SlObj o);
 
 void slSetOutOfMemoryError(SlVM *vm);
 void slSetError(SlVM *vm, const char *fmt, ...);

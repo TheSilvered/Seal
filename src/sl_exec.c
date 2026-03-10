@@ -1,5 +1,6 @@
-#include "sl_exec.h"
+#include "sl_builtin.h"
 #include "sl_codegen.h"
+#include "sl_exec.h"
 #include "clib_mem.h"
 
 #define _blockMinCapacity 512 // 8 KiB blocks
@@ -12,6 +13,8 @@ static void popSlots(SlVM *vm, uint16_t count);
 
 // Add a stack frame to the call stack.
 static SlCallFrame *pushFrame(SlVM *vm);
+// Get top call frame
+static SlCallFrame *topFrame(SlVM *vm);
 // Remove a frame from the call stack.
 static void popFrame(SlVM *vm);
 
@@ -37,19 +40,19 @@ static SlObj *pushSlots(SlVM *vm, uint16_t count) {
     SlStackBlock *top = vm->stackTop;
     if (top == NULL || top->cap - top->used < count) {
         uint16_t newCap = count > _blockMinCapacity ? count : _blockMinCapacity;
-        SlStackBlock *newBlock = memAllocZeroedBytes(
-            sizeof(*newBlock) + (newCap - 1) * sizeof(*newBlock->slots)
+        top = memAllocZeroedBytes(
+            sizeof(*top) + (newCap - 1) * sizeof(*top->slots)
         );
-        if (newBlock == NULL) {
+        if (top == NULL) {
             slSetOutOfMemoryError(vm);
             return NULL;
         }
-        newBlock->prev = top;
-        newBlock->cap = newCap;
-        newBlock->used = 0;
-        vm->stackTop = newBlock;
+        top->prev = top;
+        top->cap = newCap;
+        top->used = 0;
+        vm->stackTop = top;
         for (uint16_t i = 0; i < newCap; i++) {
-            newBlock->slots[i].type = SlObj_EmptySlot;
+            top->slots[i].type = SlObj_EmptySlot;
         }
     }
 
@@ -71,9 +74,9 @@ static void popSlots(SlVM *vm, uint16_t count) {
 }
 
 static SlCallFrame *pushFrame(SlVM *vm) {
+    vm->callStack.totalUsed++;
     SlCallStackBlock *top = vm->callStack.top;
     if (top != NULL && top->used < slCallStackCap) {
-        vm->callStack.totalUsed++;
         return &top->frames[top->used++];
     }
     SlCallStackBlock *block = memAlloc(1, sizeof(*block));
@@ -83,9 +86,19 @@ static SlCallFrame *pushFrame(SlVM *vm) {
     }
     block->prev = top;
     vm->callStack.top = block;
-    block->used++;
-    vm->callStack.totalUsed++;
+    block->used = 1;
     return &block->frames[0];
+}
+
+static SlCallFrame *topFrame(SlVM *vm) {
+    assert(vm->callStack.top != NULL);
+    assert(vm->callStack.totalUsed > 0);
+    SlCallStackBlock *top = vm->callStack.top;
+    if (top->used > 0) {
+        return &top->frames[top->used - 1];
+    } else {
+        return &top->prev->frames[top->prev->used - 1];
+    }
 }
 
 static void popFrame(SlVM *vm) {
@@ -134,11 +147,57 @@ static bool exeFunc(SlVM *vm) {
         case SlOp_nop:
             break;
         case SlOp_ldnull:
-            vm->stackPtr[decodeReg(vm)] = slNull;
+            setSlot(vm, decodeReg(vm), slNull);
             break;
-        case SlOp_add:
+        case SlOp_ldi8: {
+            uint16_t dest = decodeReg(vm);
+            SlObj num = slObjInt((int8_t)vm->bytecode->bytes[vm->pc++]);
+            setSlot(vm, dest, num);
+            break;
+        }
+        case SlOp_cpy: {
+            uint16_t dest, src;
+            dest = decodeReg(vm);
+            src = decodeReg(vm);
+            setSlot(vm, dest, slNewRef(vm->stackPtr[src]));
+        }
+        case SlOp_add: {
+            uint16_t dest, lhs, rhs;
+            dest = decodeReg(vm);
+            lhs = decodeReg(vm);
+            rhs = decodeReg(vm);
+            setSlot(vm, dest, slAdd(vm, vm->stackPtr[lhs], vm->stackPtr[rhs]));
+            goto maybeError;
+        }
+        case SlOp_sub:
+        case SlOp_mul:
+        case SlOp_div:
+        case SlOp_mod:
+        case SlOp_pow: {
+            slSetError(vm, "TODO: implement opcode");
+            goto maybeError;
+        }
+        case SlOp_ret: {
+            SlObj retVal = slNewRef(vm->stackPtr[decodeReg(vm)]);
+            SlCallFrame *frame = topFrame(vm);
+            slDelRef(*frame->retAddress);
+            *frame->retAddress = retVal;
+            vm->pc = frame->pc;
+            popFrame(vm);
+            break;
+        }
+        default:
+            assert(false && "unreachable opcode");
+            return false;
+        }
+
+        continue;
+    maybeError:
+        if (vm->error.occurred) {
+            return false;
         }
     }
+    return true;
 }
 
 static inline uint16_t decodeReg(SlVM *vm) {
