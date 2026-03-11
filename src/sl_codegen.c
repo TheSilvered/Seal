@@ -207,7 +207,10 @@ SlObj slGenCode(SlVM *vm, SlSource *source) {
 
     result = slFrozenFuncNew(vm, funcName, bc);
 
-    printBytecode(&g);
+    char *printBc = getenv("SL_PRINT_AST");
+    if (printBc && strcmp(printBc, "true") == 0) {
+        printBytecode(&g);
+    }
 
 exit:
     u8Clear(&g.bytecode);

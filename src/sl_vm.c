@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <assert.h>
+#include <errno.h>
 
 static inline void destroyObj(SlObj o);
 
@@ -19,6 +20,63 @@ SlSource slSourceFromCStr(const char *str) {
         .text = (uint8_t *)str,
         .textLen = len
     };
+}
+
+SlSource *slSourceFromFile(SlVM *vm, const char *path) {
+    SlSource *ret = NULL;
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        slSetError(vm, "failed to open %.1024s: %s", path, strerror(errno));
+        return NULL;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        slSetError(vm, "failed to seek %.1024s: %s", path, strerror(errno));
+        goto exit;
+    }
+    long fileSize = ftell(f);
+    if (fileSize < 0) {
+        slSetError(
+            vm,
+            "failed to get file size %.1024s: %s",
+            path, strerror(errno)
+        );
+        goto exit;
+    }
+    if (fileSize > UINT32_MAX) {
+        slSetError(vm, "file too big %.1024s, maximum size is 4GiB", path);
+        goto exit;
+    }
+    assert(fseek(f, 0, SEEK_SET) == 0);
+
+    ret = memAllocBytes(sizeof(*ret) + fileSize);
+    if (ret == NULL) {
+        slSetOutOfMemoryError(vm);
+        goto exit;
+    }
+    ret->text = (uint8_t *)(ret + 1);
+    ret->path = path;
+    size_t textLen = fread(ret->text, 1, fileSize, f);
+    if (textLen < fileSize && ferror(f) != 0 && !feof(f)) {
+        int error = ferror(f);
+        slSetError(
+            vm,
+            "failed to read file %.1024s: %s",
+            path,
+            strerror(error)
+        );
+        memFree(ret);
+        ret = NULL;
+        goto exit;
+    }
+    ret->textLen = textLen;
+
+exit:
+    fclose(f);
+    return ret;
+}
+
+void slSourceFree(SlSource *source) {
+    memFree(source);
 }
 
 SlObj slObjInt(int64_t value) {
@@ -72,7 +130,7 @@ SlObj slFrozenStrFmt(SlVM *vm, const char *fmt, ...) {
     str->len = len - 1;
     str->cap = 0;
 
-    (void)vsnprintf(str->bytes, len, fmt, args);
+    (void)vsnprintf((char *)str->bytes, len, fmt, args);
     va_end(args);
 
     return (SlObj){ .type = SlObj_FrozenStr, .as.str = str };

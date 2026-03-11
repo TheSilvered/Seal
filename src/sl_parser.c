@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
 
 slArrayType(SlNode, Nodes, nodes)
 slArrayImpl(SlNode, Nodes, nodes)
@@ -159,7 +161,10 @@ SlAst slParse(SlVM *vm, SlSource *source) {
         .nodeCount = p.nodes.len,
         .root = root
     };
-    printNode(ast.root, &ast, 0);
+    char *printAst = getenv("SL_PRINT_AST");
+    if (printAst && strcmp(printAst, "true") == 0) {
+        printNode(ast.root, &ast, 0);
+    }
     return ast;
 }
 

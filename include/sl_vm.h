@@ -140,6 +140,12 @@ struct SlBytecode {
     const SlDebugInfo *debugInfo;
 };
 
+struct SlSharedSlots {
+    SlGCObj asGCObj;
+    size_t slotCount;
+    SlObj slots[1];
+};
+
 typedef struct SlSource {
     const char *path;
     uint8_t *text;
@@ -171,6 +177,7 @@ typedef struct SlCallStack {
     uint64_t totalUsed;
 } SlCallStack;
 
+// Seal virtual machine, init with `SlVM vm = { 0 };`
 typedef struct SlVM {
     struct {
         bool occurred;
@@ -188,12 +195,9 @@ typedef struct SlVM {
 // Create a source from a C string. No memory is allocated.
 // The length is capped at UINT32_MAX even if the string is longer.
 SlSource slSourceFromCStr(const char *str);
-
-struct SlSharedSlots {
-    SlGCObj asGCObj;
-    size_t slotCount;
-    SlObj slots[1];
-};
+// Allocate a source from a file. It can be freed with slSourceFree
+SlSource *slSourceFromFile(SlVM *vm, const char *path);
+void slSourceFree(SlSource *source);
 
 #define slNull ((SlObj){                                                       \
         .type = SlObj_Null,                                                    \
