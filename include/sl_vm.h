@@ -221,6 +221,8 @@ SlObj slFrozenStrNew(
     size_t len
 );
 
+SlObj slFrozenStrFmt(SlVM *vm, const char *fmt, ...);
+
 // Create a new function object.
 // A reference is taken from name and bytecode.
 // If an error occurs return NULL.

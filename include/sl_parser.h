@@ -6,11 +6,14 @@
 #include "sl_vm.h"
 
 typedef enum SlNodeKind {
+    SlNode_INVALID,
+
     SlNode_Block,
     SlNode_VarDeclr,
     SlNode_BinOp,
     SlNode_NumInt,
-    SlNode_Access
+    SlNode_Access,
+    SlNode_Print
 } SlNodeKind;
 
 typedef enum SlBinOp {
@@ -41,6 +44,7 @@ typedef struct SlNode {
             SlNodeIdx lhs, rhs;
             SlBinOp op;
         } binOp;
+        SlNodeIdx print;
         int64_t numInt;
     } as;
 } SlNode;

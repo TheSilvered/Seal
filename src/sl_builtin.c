@@ -22,3 +22,32 @@ SlObj slAdd(SlVM *vm, SlObj a, SlObj b){
         return slNull;
     }
 }
+
+SlObj slToStr(SlVM *vm, SlObj o) {
+#define SlU8(s) (const uint8_t *)(s), sizeof(s) - 1
+
+    switch (o.type & 0xff) {
+    case SlObj_Null:
+        return slFrozenStrNew(vm, SlU8("null"));
+    case SlObj_EmptySlot:
+        return slFrozenStrNew(vm, SlU8("internal:empty_slot"));
+    case SlObj_Bool:
+        if (o.as.boolean) {
+            return slFrozenStrNew(vm, SlU8("true"));
+        } else {
+            return slFrozenStrNew(vm, SlU8("false"));
+        }
+    case SlObj_Int:
+        return slFrozenStrFmt(vm, "%"PRIi64, o.as.numInt);
+    case SlObj_Float:
+        return slFrozenStrFmt(vm, "%.15g", o.as.numFloat);
+    case SlObj_Str:
+        return slNewRef(o);
+    case SlObj_Bytecode:
+        return slFrozenStrNew(vm, SlU8("internal:bytecode"));
+    default:
+        assert(false && "TODO slToStr");
+        return slFrozenStrNew(vm, SlU8("TODO"));
+    }
+#undef SlU8
+}

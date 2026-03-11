@@ -32,7 +32,8 @@ static const struct {
     SlTokenKind kind;
 } keywords[] = {
     { "var", SlToken_KwVar },
-    { "func", SlToken_KwFunc }
+    { "func", SlToken_KwFunc },
+    { "print", SlToken_KwPrint }
 };
 static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
 
@@ -251,7 +252,7 @@ static bool appendIdent(LexerState *l) {
 
     uint32_t len = l->pos - start;
     l->pos--;
-    
+
     const char *identStr = (const char *)(l->text + start);
     for (size_t i = 0; i < keywordsLen; i++) {
         if (strncmp(identStr, keywords[i].str, len) == 0) {

@@ -50,6 +50,7 @@ static uint32_t regCount(GenState *g, SlNodeIdx nodeIdx);
 static bool genStatement(GenState *g, SlNodeIdx nodeIdx);
 static bool genBlock(GenState *g, SlNodeIdx nodeIdx);
 static bool genVarDeclr(GenState *g, SlNodeIdx nodeIdx);
+static bool genPrint(GenState *g, SlNodeIdx nodeIdx);
 static int32_t genExpr(GenState *g, SlNodeIdx nodeIdx);
 static int32_t genBinOp(GenState *g, SlNodeIdx nodeIdx);
 static int32_t genNumInt(GenState *g, SlNodeIdx nodeIdx);
@@ -139,6 +140,9 @@ static void printBytecode(GenState *g) {
             break;
         case SlOp_pow:
             printInst(g, &i, "pow", "rrr");
+            break;
+        case SlOp_print:
+            printInst(g, &i, "print", "r");
             break;
         case SlOp_ret:
             printInst(g, &i, "ret", "r");
@@ -384,6 +388,8 @@ static bool genStatement(GenState *g, SlNodeIdx nodeIdx) {
         }
         g->usedStack--;
         return true;
+    case SlNode_Print:
+        return genPrint(g, nodeIdx);
     default:
         assert(false && "unhandled note kind");
         return false;
@@ -419,6 +425,16 @@ static bool genVarDeclr(GenState *g, SlNodeIdx nodeIdx) {
 
     // add after genExpr otherwise 'a' can be accessed
     return addVar(g, reg, node.as.varDeclr.name);
+}
+
+static bool genPrint(GenState *g, SlNodeIdx nodeIdx) {
+    SlNode node = g->ast.nodes[nodeIdx];
+
+    int32_t reg = genExpr(g, node.as.print);
+    if (reg == -1) {
+        return false;
+    }
+    return pushOp(g, SlOp_print) && pushReg(g, reg);
 }
 
 static int32_t genBinOp(GenState *g, SlNodeIdx nodeIdx) {

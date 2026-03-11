@@ -27,6 +27,7 @@ typedef enum SlTokenKind {
 
     SlToken_KwVar,
     SlToken_KwFunc,
+    SlToken_KwPrint,
 
     SlToken_Eof
 } SlTokenKind;

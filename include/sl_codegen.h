@@ -23,7 +23,8 @@ typedef enum SlOpCode {
     SlOp_mod,  // dest(r), lhs(r), rhs(r)
     SlOp_pow,  // dest(r), lhs(r), rhs(r)
 
-    SlOp_ret,  // value(r)
+    SlOp_print, // value(r)
+    SlOp_ret,   // value(r)
 } SlOpCode;
 
 SlObj slGenCode(SlVM *vm, SlSource *source);

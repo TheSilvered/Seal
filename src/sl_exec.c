@@ -177,6 +177,15 @@ static bool exeFunc(SlVM *vm) {
             slSetError(vm, "TODO: implement opcode");
             goto maybeError;
         }
+        case SlOp_print: {
+            SlObj str = slToStr(vm, vm->stackPtr[decodeReg(vm)]);
+            if ((str.type & 0xff) != SlObj_Str) {
+                goto maybeError;
+            }
+            printf("%.*s\n", (int)str.as.str->len, (char *)str.as.str->bytes);
+            slDelRef(str);
+            break;
+        }
         case SlOp_ret: {
             SlObj retVal = slNewRef(vm->stackPtr[decodeReg(vm)]);
             SlCallFrame *frame = topFrame(vm);

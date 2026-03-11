@@ -26,6 +26,7 @@ static bool expectNext(ParserState *p, SlTokenKind kind);
 static SlNodeIdx parseFile(ParserState *p);
 static SlNodeIdx parseStatement(ParserState *p);
 static SlNodeIdx parseVarDeclr(ParserState *p);
+static SlNodeIdx parsePrint(ParserState *p);
 static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
 static SlNodeIdx parseValue(ParserState *p);
@@ -36,6 +37,7 @@ static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent);
 static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
 static void printNumInt(SlNode node, uint32_t indent);
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent);
+static void printPrint(SlNode node, const SlAst *ast, uint32_t indent);
 
 void slPrintAst(const SlAst *ast) {
     printNode(ast->root, ast, 0);
@@ -60,6 +62,12 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
         break;
     case SlNode_Access:
         printAccess(node, ast, indent);
+        break;
+    case SlNode_Print:
+        printPrint(node, ast, indent);
+        break;
+    default:
+        assert(false && "unhandled node type");
     }
 }
 
@@ -118,6 +126,11 @@ static void printAccess(SlNode node, const SlAst *ast, uint32_t indent) {
         node.as.varDeclr.name.len,
         (char *)&ast->strs[node.as.varDeclr.name.idx]
     );
+}
+
+static void printPrint(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf("%*sprint\n", indent * INDENT_WIDTH, "");
+    printNode(node.as.print, ast, indent + 1);
 }
 
 SlAst slParse(SlVM *vm, SlSource *source) {
@@ -236,6 +249,8 @@ SlNodeIdx parseStatement(ParserState *p) {
     switch (token(p).kind) {
     case SlToken_KwVar:
         return parseVarDeclr(p);
+    case SlToken_KwPrint:
+        return parsePrint(p);
     default:
         setError(
             p,
@@ -283,6 +298,23 @@ SlNodeIdx parseVarDeclr(ParserState *p) {
             }
         }
     );
+}
+
+static SlNodeIdx parsePrint(ParserState *p) {
+    uint32_t line = token(p).line;
+    next(p);
+    SlNodeIdx expr = parseExpr(p);
+    if (expr == -1) {
+        return -1;
+    }
+    if (!expectNext(p, SlToken_Semicolon)) {
+        return -1;
+    }
+    return addNode(p, (SlNode){
+        .kind = SlNode_Print,
+        .line =  line,
+        .as.print = expr
+    });
 }
 
 static SlNodeIdx parseExpr(ParserState *p) {

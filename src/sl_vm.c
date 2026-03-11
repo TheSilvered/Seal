@@ -55,6 +55,29 @@ SlObj slFrozenStrNew(
     return (SlObj){ .type = SlObj_FrozenStr, .as.str = str };
 }
 
+SlObj slFrozenStrFmt(SlVM *vm, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    size_t len = (size_t)vsnprintf(NULL, 0, fmt, args) + 1;
+
+    SlStr *str = memAllocBytes(sizeof(*str) + len * sizeof(str->bytes));
+    if (str == NULL) {
+        slSetOutOfMemoryError(vm);
+        va_end(args);
+        return slNull;
+    }
+
+    str->asGCObj.refCount = 1;
+    str->bytes = (uint8_t *)(str + 1);
+    str->len = len - 1;
+    str->cap = 0;
+
+    (void)vsnprintf(str->bytes, len, fmt, args);
+    va_end(args);
+
+    return (SlObj){ .type = SlObj_FrozenStr, .as.str = str };
+}
+
 SlObj slFrozenFuncNew(
     SlVM *vm,
     SlObj name,
