@@ -11,23 +11,29 @@
 slArrayType(SlNode, Nodes, nodes)
 slArrayImpl(SlNode, Nodes, nodes)
 
+slArrayType(SlStrIdx, Strings, strings)
+slArrayImpl(SlStrIdx, Strings, strings)
+
 typedef struct ParserState {
     SlVM *vm;
     const char *path;
     SlTokens tokens;
     uint32_t idx;
     Nodes nodes;
+    bool inFunc;
 } ParserState;
 
 static void setError(ParserState *p, const char *fmt, ...);
 static SlNodeIdx addNode(ParserState *p, SlNode node);
 static SlToken token(ParserState *p);
-static void next(ParserState *p);
+static SlToken next(ParserState *p);
 static bool expect(ParserState *p, SlTokenKind kind);
 static bool expectNext(ParserState *p, SlTokenKind kind);
 static SlNodeIdx parseFile(ParserState *p);
 static SlNodeIdx parseStatement(ParserState *p);
 static SlNodeIdx parseVarDeclr(ParserState *p);
+static SlNodeIdx parseFuncDeclr(ParserState *p);
+static SlNodeIdx parseBlock(ParserState *p);
 static SlNodeIdx parsePrint(ParserState *p);
 static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
@@ -40,6 +46,7 @@ static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
 static void printNumInt(SlNode node, uint32_t indent);
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent);
 static void printPrint(SlNode node, const SlAst *ast, uint32_t indent);
+static void printFuncDeclr(SlNode node, const SlAst *ast, uint32_t indent);
 
 void slPrintAst(const SlAst *ast) {
     printNode(ast->root, ast, 0);
@@ -67,6 +74,9 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
         break;
     case SlNode_Print:
         printPrint(node, ast, indent);
+        break;
+    case SlNode_FuncDeclr:
+        printFuncDeclr(node, ast, indent);
         break;
     default:
         assert(false && "unhandled node type");
@@ -135,6 +145,24 @@ static void printPrint(SlNode node, const SlAst *ast, uint32_t indent) {
     printNode(node.as.print, ast, indent + 1);
 }
 
+static void printFuncDeclr(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf(
+        "%*sfunc %.*s(",
+        indent * INDENT_WIDTH, "",
+        node.as.funcDeclr.name.len,
+        (char *)&ast->strs[node.as.funcDeclr.name.idx]
+    );
+    for (uint32_t i = 0; i < node.as.funcDeclr.paramCount; i++) {
+        SlStrIdx param = node.as.funcDeclr.paramNames[i];
+        printf("%.*s", param.len, (char *)&ast->strs[param.idx]);
+        if (i + 1 < node.as.funcDeclr.paramCount) {
+            printf(", ");
+        }
+    }
+    printf(")\n");
+    printNode(node.as.funcDeclr.body, ast, indent + 1);
+}
+
 SlAst slParse(SlVM *vm, SlSource *source) {
     ParserState p = {
         .vm = vm,
@@ -192,8 +220,9 @@ SlToken token(ParserState *p) {
     return p->tokens.tokens[p->idx];
 }
 
-void next(ParserState *p) {
-    p->idx++;
+SlToken next(ParserState *p) {
+    assert(p->idx < p->tokens.tokenCount);
+    return p->tokens.tokens[p->idx++];
 }
 
 bool expect(ParserState *p, SlTokenKind kind) {
@@ -256,6 +285,8 @@ SlNodeIdx parseStatement(ParserState *p) {
         return parseVarDeclr(p);
     case SlToken_KwPrint:
         return parsePrint(p);
+    case SlToken_KwFunc:
+        return parseFuncDeclr(p);
     default:
         setError(
             p,
@@ -267,16 +298,13 @@ SlNodeIdx parseStatement(ParserState *p) {
 }
 
 SlNodeIdx parseVarDeclr(ParserState *p) {
-    uint32_t line = token(p).line;
-    // consume 'var'
-    next(p);
+    uint32_t line = next(p).line;
+
     if (!expect(p, SlToken_Ident)) {
         return -1;
     }
 
-    uint32_t nameIdx = token(p).as.ident.idx;
-    uint32_t nameLen = token(p).as.ident.len;
-    next(p);
+    SlStrIdx name = next(p).as.ident;
 
     if (!expectNext(p, SlToken_Equals)) {
         return -1;
@@ -297,17 +325,90 @@ SlNodeIdx parseVarDeclr(ParserState *p) {
             .kind = SlNode_VarDeclr,
             .line = line,
             .as.varDeclr = {
-                .name.idx = nameIdx,
-                .name.len = nameLen,
+                .name = name,
                 .value = value
             }
         }
     );
 }
 
-static SlNodeIdx parsePrint(ParserState *p) {
-    uint32_t line = token(p).line;
+static SlNodeIdx parseFuncDeclr(ParserState *p) {
+    uint32_t line = next(p).line;
+
+    if (!expect(p, SlToken_Ident)) {
+        return -1;
+    }
+    SlStrIdx name = next(p).as.ident;
+
+    if (!expectNext(p, SlToken_LeftParen)) {
+        return -1;
+    }
+    Strings params = { 0 };
+    while (token(p).kind != SlToken_RightParen) {
+        if (!expect(p, SlToken_Ident)) {
+            return -1;
+        }
+        uint32_t paramIdx = token(p).as.ident.idx;
+        uint32_t paramLen = token(p).as.ident.len;
+        if (!stringsPush(&params, token(p).as.ident)) {
+            return -1;
+        }
+        next(p);
+        if (token(p).kind == SlToken_Comma) {
+            next(p);
+        }
+    }
     next(p);
+    bool prevInFunc = p->inFunc;
+    p->inFunc = true;
+    SlNodeIdx body = parseBlock(p);
+    p->inFunc = prevInFunc;
+
+    if (body == -1) {
+        return -1;
+    }
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_FuncDeclr,
+        .line = line,
+        .as.funcDeclr = {
+            .name = name,
+            .paramNames = params.data,
+            .paramCount = params.len,
+            .body = body
+        }
+    });
+}
+
+static SlNodeIdx parseBlock(ParserState *p) {
+    uint32_t line = token(p).line;
+    if (!expectNext(p, SlToken_LeftCurly)) {
+        return -1;
+    }
+
+    i32Arr nodes = { 0 };
+    while (token(p).kind != SlToken_RightCurly) {
+        SlNodeIdx stmnt = parseStatement(p);
+        if (stmnt == -1) {
+            return -1;
+        }
+        if (!i32Push(&nodes, stmnt)) {
+            return -1;
+        }
+    }
+    next(p);
+    return addNode(p, (SlNode){
+        .kind = SlNode_Block,
+        .line = line,
+        .as.block = {
+            .nodes = nodes.data,
+            .nodeCount = nodes.len
+        }
+    });
+}
+
+static SlNodeIdx parsePrint(ParserState *p) {
+    uint32_t line = next(p).line;
     SlNodeIdx expr = parseExpr(p);
     if (expr == -1) {
         return -1;
@@ -369,8 +470,7 @@ static SlNodeIdx parseMul(ParserState *p) {
         kind == SlToken_Star || kind == SlToken_FwSlash || kind == SlToken_Perc;
         kind = token(p).kind
     ) {
-        uint32_t line = token(p).line;
-        next(p);
+        uint32_t line = next(p).line;
         SlNodeIdx rhs = parseValue(p);
         if (rhs == -1) {
             return -1;
@@ -422,8 +522,7 @@ static SlNodeIdx parseValue(ParserState *p) {
         return node;
     }
     case SlToken_NumInt: {
-        SlToken tok = token(p);
-        next(p);
+        SlToken tok = next(p);
         return addNode(
             p,
             (SlNode){
@@ -434,15 +533,13 @@ static SlNodeIdx parseValue(ParserState *p) {
         );
     }
     case SlToken_Ident: {
-        SlToken tok = token(p);
-        next(p);
+        SlToken tok = next(p);
         return addNode(
             p,
             (SlNode){
                 .kind = SlNode_Access,
                 .line = tok.line,
-                .as.access.idx = tok.as.ident.idx,
-                .as.access.len = tok.as.ident.len
+                .as.access = tok.as.ident,
             }
         );
     }

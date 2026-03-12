@@ -13,7 +13,9 @@ typedef enum SlNodeKind {
     SlNode_BinOp,
     SlNode_NumInt,
     SlNode_Access,
-    SlNode_Print
+    SlNode_Print,
+    SlNode_FuncDeclr,
+    SlNode_RetStmnt
 } SlNodeKind;
 
 typedef enum SlBinOp {
@@ -44,6 +46,13 @@ typedef struct SlNode {
             SlNodeIdx lhs, rhs;
             SlBinOp op;
         } binOp;
+        struct {
+            SlStrIdx name;
+            SlStrIdx *paramNames;
+            uint32_t paramCount;
+            SlNodeIdx body;
+        } funcDeclr;
+        SlNodeIdx retStmnt;
         SlNodeIdx print;
         int64_t numInt;
     } as;
