@@ -1,2 +1,2 @@
-var a = 3 + 2;
+var a = 1 + 3 * 2;
 print a;

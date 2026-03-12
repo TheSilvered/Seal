@@ -169,8 +169,15 @@ static bool exeFunc(SlVM *vm) {
             setSlot(vm, dest, slAdd(vm, vm->stackPtr[lhs], vm->stackPtr[rhs]));
             goto maybeError;
         }
+        case SlOp_mul: {
+            uint16_t dest, lhs, rhs;
+            dest = decodeReg(vm);
+            lhs = decodeReg(vm);
+            rhs = decodeReg(vm);
+            setSlot(vm, dest, slMul(vm, vm->stackPtr[lhs], vm->stackPtr[rhs]));
+            goto maybeError;
+        }
         case SlOp_sub:
-        case SlOp_mul:
         case SlOp_div:
         case SlOp_mod:
         case SlOp_pow: {
@@ -206,7 +213,7 @@ static bool exeFunc(SlVM *vm) {
             return false;
         }
     }
-    return true;
+    return !vm->error.occurred;
 }
 
 static inline uint16_t decodeReg(SlVM *vm) {
