@@ -289,19 +289,10 @@ static void popVarTable(GenState *g) {
     g->varsTop = parent;
 }
 
-static bool strsEq(GenState *g, SlStrIdx str1, SlStrIdx str2) {
-    return str1.len == str2.len
-        && 0 == memcmp(
-            g->ast.strs + str1.idx,
-            g->ast.strs + str2.idx,
-            str1.len
-        );
-}
-
 static bool addVar(GenState *g, uint16_t reg, SlStrIdx var) {
     Variables *vars = &g->varsTop->vars;
     for (uint32_t i = 0; i < g->varsTop->vars.len; i++) {
-        if (strsEq(g, vars->data[i].name, var)) {
+        if (slStrIdxEq(g->ast.strs, vars->data[i].name, var)) {
             slSetError(g->vm, "duplicate declaration of '%.*s'", _strFmt(var));
             return false;
         }
@@ -318,7 +309,7 @@ static int32_t getVar(GenState *g, SlStrIdx var) {
     while (table != NULL) {
         Variables *vars = &g->varsTop->vars;
         for (uint32_t i = 0; i < g->varsTop->vars.len; i++) {
-            if (strsEq(g, vars->data[i].name, var)) {
+            if (slStrIdxEq(g->ast.strs, vars->data[i].name, var)) {
                 return vars->data[i].reg;
             }
         }

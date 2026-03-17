@@ -14,11 +14,7 @@ uint32_t slFNVHash(const void *data, size_t len) {
 }
 
 static bool strMapEq(SlStrIdx str1, SlStrIdx str2, void *userData) {
-    return str1.len == str2.len && memcmp(
-        (uint8_t *)userData + str1.idx,
-        (uint8_t *)userData + str2.idx,
-        str1.len
-    );
+    return slStrIdxEq(str1, str2, (uint8_t *)userData);
 }
 
 static uint32_t strMapHash(SlStrIdx str, void *userData) {
