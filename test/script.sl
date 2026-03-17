@@ -1,2 +1,4 @@
-var a = 1 + 3 * 2;
-print a;
+var a = 10;
+func f() {
+    print a;
+}

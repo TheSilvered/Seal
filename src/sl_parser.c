@@ -1,6 +1,7 @@
 #include "sl_array.h"
 #include "sl_parser.h"
 #include "sl_lexer.h"
+#include "sl_vartable.h"
 
 #include <stdbool.h>
 #include <assert.h>
@@ -11,42 +12,91 @@
 slArrayType(SlNode, Nodes, nodes)
 slArrayImpl(SlNode, Nodes, nodes)
 
-slArrayType(SlStrIdx, Strings, strings)
-slArrayImpl(SlStrIdx, Strings, strings)
+slArrayType(SlUniqueVar, VarArr, varArr)
+slArrayImpl(SlUniqueVar, VarArr, varArr)
+
+/*
+1) Variable creation
+
+When a variable is created it is added to the top frame of `vars`, with a value
+of [funcLevel|ID] where ID is a number incremented in `varCounts` each time a
+new variable with the same name is declared.
+
+2) Variable access
+
+When accessing a variable the `funcLevel` part is updated if the current level
+is larger than the old one.
+
+3) Blocks
+
+When a block is opened a new frame is added on top of `vars` and when the block
+is closed the top frame is moved to the `closedBlocks`.
+
+4) Functions
+
+Before parsing the function, the function itself is added to the top frame of
+`vars` and `closedBlocks` is saved to be restored later and cleared. Then the
+body is parsed as a regular block, with the arguments already added to the
+pushed frame.
+After parsing the body all variables in `closedBlocks` that have a higher
+`funcLevel` than the current one are saved as shared names.
+*/
 
 typedef struct ParserState {
     SlVM *vm;
     const char *path;
     SlTokens tokens;
-    uint32_t idx;
     Nodes nodes;
-    bool inFunc;
+    uint32_t idx;
+    uint16_t funcLevel;
+    SlVarTable *vars;
+    SlVarTable *closedBlocks;
+    SlStrMap varCounts;
 } ParserState;
 
+// Add a new name and get its ID. Return -1 on error.
+static int32_t addVar(ParserState *p, SlStrIdx name);
+// Get the ID of a referenced name. Return -1 on error.
+static int32_t refVar(ParserState *p, SlStrIdx name);
+// Add a new VarTable in `p->vars`.
+static bool pushVarTable(ParserState *p);
+// Move the top table from `p->vars` to `p->closedBlocks`
+static void popVarTable(ParserState *p);
+
 static void setError(ParserState *p, const char *fmt, ...);
+
 static SlNodeIdx addNode(ParserState *p, SlNode node);
 static SlToken token(ParserState *p);
 static SlToken next(ParserState *p);
 static bool expect(ParserState *p, SlTokenKind kind);
 static bool expectNext(ParserState *p, SlTokenKind kind);
+
 static SlNodeIdx parseFile(ParserState *p);
 static SlNodeIdx parseStatement(ParserState *p);
 static SlNodeIdx parseVarDeclr(ParserState *p);
 static SlNodeIdx parseFuncDeclr(ParserState *p);
-static SlNodeIdx parseBlock(ParserState *p);
+static SlNodeIdx parseFuncBody(ParserState *p);
 static SlNodeIdx parsePrint(ParserState *p);
+static SlNodeIdx parseBlock(ParserState *p);
 static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
 static SlNodeIdx parseValue(ParserState *p);
 
+static bool getSharedVars(ParserState *p, VarArr *names);
+
 static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent);
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent);
-static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent);
+static void printDeclr(
+    SlNode node,
+    const char *name,
+    const SlAst *ast,
+    uint32_t indent
+);
 static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
 static void printNumInt(SlNode node, uint32_t indent);
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent);
 static void printPrint(SlNode node, const SlAst *ast, uint32_t indent);
-static void printFuncDeclr(SlNode node, const SlAst *ast, uint32_t indent);
+static void printLambda(SlNode node, const SlAst *ast, uint32_t indent);
 
 void slPrintAst(const SlAst *ast) {
     printNode(ast->root, ast, 0);
@@ -61,7 +111,10 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
         printBlock(node, ast, indent);
         break;
     case SlNode_VarDeclr:
-        printVarDeclr(node, ast, indent);
+        printDeclr(node, "var", ast, indent);
+        break;
+    case SlNode_FuncDeclr:
+        printDeclr(node, "func", ast, indent);
         break;
     case SlNode_BinOp:
         printBinOp(node, ast, indent);
@@ -75,8 +128,8 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
     case SlNode_Print:
         printPrint(node, ast, indent);
         break;
-    case SlNode_FuncDeclr:
-        printFuncDeclr(node, ast, indent);
+    case SlNode_Lambda:
+        printLambda(node, ast, indent);
         break;
     default:
         assert(false && "unhandled node type");
@@ -90,12 +143,19 @@ static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
     }
 }
 
-static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent) {
+static void printDeclr(
+    SlNode node,
+    const char *name,
+    const SlAst *ast,
+    uint32_t indent
+) {
     printf(
-        "%*svar %.*s =\n",
+        "%*s%s %.*s.%"PRIu32" =\n",
         indent * INDENT_WIDTH, "",
+        name,
         node.as.varDeclr.name.len,
-        (char *)&ast->strs[node.as.varDeclr.name.idx]
+        (char *)&ast->strs[node.as.varDeclr.name.idx],
+        node.as.varDeclr.id
     );
     printNode(node.as.varDeclr.value, ast, indent + 1);
 }
@@ -133,10 +193,11 @@ static void printNumInt(SlNode node, uint32_t indent) {
 
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent) {
     printf(
-        "%*s%.*s (access)\n",
+        "%*s%.*s.%"PRIu32" (access)\n",
         indent * INDENT_WIDTH, "",
-        node.as.varDeclr.name.len,
-        (char *)&ast->strs[node.as.varDeclr.name.idx]
+        node.as.access.name.len,
+        (char *)&ast->strs[node.as.access.name.idx],
+        node.as.access.id
     );
 }
 
@@ -145,22 +206,63 @@ static void printPrint(SlNode node, const SlAst *ast, uint32_t indent) {
     printNode(node.as.print, ast, indent + 1);
 }
 
-static void printFuncDeclr(SlNode node, const SlAst *ast, uint32_t indent) {
-    printf(
-        "%*sfunc %.*s(",
-        indent * INDENT_WIDTH, "",
-        node.as.funcDeclr.name.len,
-        (char *)&ast->strs[node.as.funcDeclr.name.idx]
-    );
-    for (uint32_t i = 0; i < node.as.funcDeclr.paramCount; i++) {
-        SlStrIdx param = node.as.funcDeclr.paramNames[i];
-        printf("%.*s", param.len, (char *)&ast->strs[param.idx]);
-        if (i + 1 < node.as.funcDeclr.paramCount) {
+static void printLambda(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf("%*slambda |", indent * INDENT_WIDTH, "");
+
+    for (uint32_t i = 0; i < node.as.lambda.paramCount; i++) {
+        SlStrIdx param = node.as.lambda.vars[i].name;
+        uint32_t id = node.as.lambda.vars[i].id;
+        printf(
+            "%.*s.%"PRIu32,
+            (int)param.len,
+            (char *)&ast->strs[param.idx],
+            id
+        );
+        if (i + 1 < node.as.lambda.paramCount) {
             printf(", ");
         }
     }
-    printf(")\n");
-    printNode(node.as.funcDeclr.body, ast, indent + 1);
+    printf("|\n%*s[", indent * INDENT_WIDTH, "");
+    for (uint32_t i = 0; i < node.as.lambda.sharedCount; i++) {
+        SlStrIdx param = node.as.lambda.vars[i + node.as.lambda.paramCount].name;
+        uint32_t id = node.as.lambda.vars[i + node.as.lambda.paramCount].id;
+        printf(
+            "%.*s.%"PRIu32,
+            (int)param.len,
+            (char *)&ast->strs[param.idx],
+            id
+        );
+        if (i + 1 < node.as.lambda.paramCount) {
+            printf(", ");
+        }
+    }
+    printf("]\n");
+    printNode(node.as.lambda.body, ast, indent + 1);
+}
+
+static void destroyNode(SlNode node) {
+    switch (node.kind) {
+    case SlNode_Block:
+        memFree(&node.as.block.nodes);
+        break;
+    case SlNode_Lambda:
+        memFree(&node.as.lambda.vars);
+        break;
+    default:;
+        // Do nothing
+    }
+}
+
+static void destroyNodes(SlNode *nodes, uint32_t nodeCount) {
+    for (uint32_t i = 0; i < nodeCount; i++) {
+        destroyNode(nodes[i]);
+    }
+}
+
+void slDestroyAst(SlAst *ast) {
+    destroyNodes(ast->nodes, ast->nodeCount);
+    memFree(ast->nodes);
+    memFree(ast->strs);
 }
 
 SlAst slParse(SlVM *vm, SlSource *source) {
@@ -169,16 +271,28 @@ SlAst slParse(SlVM *vm, SlSource *source) {
         .path = source->path,
         .idx = 0,
         .nodes = { 0 },
+        .funcLevel = 0,
+        .vars = NULL,
+        .closedBlocks = NULL,
+        .varCounts = { 0 }
     };
     p.tokens = slTokenize(vm, source);
     if (vm->error.occurred) {
-        nodesClear(&p.nodes);
         return (SlAst){ .root = -1 };
     }
+    p.varCounts.userData = p.tokens.strs;
 
     SlNodeIdx root = parseFile(&p);
+    slStrMapClear(&p.varCounts);
+    while (p.vars != NULL) {
+        p.vars = slDelVarTable(p.vars);
+    }
+    while (p.closedBlocks != NULL) {
+        p.closedBlocks = slDelVarTable(p.closedBlocks);
+    }
+
     if (root == -1) {
-        nodesClear(&p.nodes);
+        destroyNodes(p.nodes.data, p.nodes.len);
         return (SlAst){ .root = -1 };
     }
     memFree(p.tokens.tokens);
@@ -196,6 +310,71 @@ SlAst slParse(SlVM *vm, SlSource *source) {
     return ast;
 }
 
+static int32_t addVar(ParserState *p, SlStrIdx name) {
+    uint32_t *mapRef;
+    // If the variable already exists in the current scope just return the
+    // existing ID
+    if ((mapRef = slStrMapGet(&p->vars->vars, name)) != NULL) {
+        return *mapRef & 0xffff;
+    }
+    mapRef = slStrMapGet(&p->varCounts, name);
+    uint32_t id;
+    if (mapRef == NULL) {
+        if (!slStrMapSet(&p->varCounts, name, 0)) {
+            return false;
+        }
+        id = 0;
+    } else {
+        id = ++(*mapRef);
+    }
+
+    uint32_t value = (p->funcLevel << 16) | (id & 0xffff);
+    if (!slVarTableSet(p->vars, name, value)) {
+        slSetOutOfMemoryError(p->vm);
+        return -1;
+    }
+    if (p->vars->vars.len > UINT16_MAX) {
+        setError(p, "too many variables, maximum is 65535");
+        return -1;
+    }
+    return (int32_t)id;
+}
+
+static int32_t refVar(ParserState *p, SlStrIdx name) {
+    uint32_t *var = slVarTableGet(p->vars, name);
+    if (var == NULL) {
+        setError(
+            p,
+            "unknown variable %.*s",
+            (int)name.len,
+            (char *)&p->tokens.strs[name.idx]
+        );
+        return -1;
+    }
+    uint32_t id = (*var & 0xffff);
+    if (*var >> 16 < p->funcLevel) {
+        *var = (p->funcLevel << 16) | id;
+    }
+    return (int32_t)id;
+}
+
+static bool pushVarTable(ParserState *p) {
+    SlVarTable *vt = slNewVarTable(p->tokens.strs, p->vars);
+    if (vt == NULL) {
+        slSetOutOfMemoryError(p->vm);
+        return false;
+    }
+    p->vars = vt;
+    return true;
+}
+
+static void popVarTable(ParserState *p) {
+    SlVarTable *topTable = p->vars;
+    p->vars = topTable->parent;
+    topTable->parent = p->closedBlocks;
+    p->closedBlocks = topTable;
+}
+
 static void setError(ParserState *p, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -210,6 +389,7 @@ static void setError(ParserState *p, const char *fmt, ...) {
 SlNodeIdx addNode(ParserState *p, SlNode node) {
     if (!nodesPush(&p->nodes, node)) {
         slSetOutOfMemoryError(p->vm);
+        destroyNode(node);
         return -1;
     }
     return (SlNodeIdx)p->nodes.len - 1;
@@ -247,6 +427,7 @@ static bool expectNext(ParserState *p, SlTokenKind kind) {
 }
 
 SlNodeIdx parseFile(ParserState *p) {
+    if (!pushVarTable(p)) return -1;
     i32Arr nodes = { 0 };
     while (token(p).kind != SlToken_Eof) {
         SlNodeIdx idx = parseStatement(p);
@@ -260,23 +441,33 @@ SlNodeIdx parseFile(ParserState *p) {
             return -1;
         }
     }
-    SlNodeIdx node = addNode(
-        p,
-        (SlNode){
-            .kind = SlNode_Block,
-            .line = 0,
-            .as.block = {
-                .nodes = nodes.data,
-                .nodeCount = nodes.len
-            }
+    popVarTable(p);
+    SlNodeIdx body = addNode(p, (SlNode){
+        .kind = SlNode_Block,
+        .line = 0,
+        .as.block = {
+            .nodes = nodes.data,
+            .nodeCount = nodes.len
         }
-    );
-    if (node == -1) {
+    });
+    if (body == -1) return -1;
+
+    VarArr sharedNames = { 0 };
+    if (!getSharedVars(p, &sharedNames)) {
         i32Clear(&nodes);
         return -1;
-    } else {
-        return node;
     }
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_Lambda,
+        .line = 0,
+        .as.lambda = {
+            .vars = sharedNames.data,
+            .paramCount = 0,
+            .sharedCount = sharedNames.len,
+            .body = body
+        }
+    });
 }
 
 SlNodeIdx parseStatement(ParserState *p) {
@@ -287,6 +478,8 @@ SlNodeIdx parseStatement(ParserState *p) {
         return parsePrint(p);
     case SlToken_KwFunc:
         return parseFuncDeclr(p);
+    case SlToken_LeftCurly:
+        return parseBlock(p);
     default:
         setError(
             p,
@@ -299,59 +492,45 @@ SlNodeIdx parseStatement(ParserState *p) {
 
 SlNodeIdx parseVarDeclr(ParserState *p) {
     uint32_t line = next(p).line;
-
-    if (!expect(p, SlToken_Ident)) {
-        return -1;
-    }
-
+    if (!expect(p, SlToken_Ident)) return -1;
     SlStrIdx name = next(p).as.ident;
-
-    if (!expectNext(p, SlToken_Equals)) {
-        return -1;
-    }
-
+    if (!expectNext(p, SlToken_Equals)) return -1;
     SlNodeIdx value = parseExpr(p);
-    if (value == -1) {
-        return -1;
-    }
+    if (value == -1) return -1;
 
-    if (!expectNext(p, SlToken_Semicolon)) {
-        return -1;
-    }
+    if (!expectNext(p, SlToken_Semicolon)) return -1;
 
-    return addNode(
-        p,
-        (SlNode){
-            .kind = SlNode_VarDeclr,
-            .line = line,
-            .as.varDeclr = {
-                .name = name,
-                .value = value
-            }
+    // Add variable only after the declaration to prevent self reference
+    int32_t id = addVar(p, name);
+    if (id == -1) return -1;
+
+    return addNode( p, (SlNode){
+        .kind = SlNode_VarDeclr,
+        .line = line,
+        .as.varDeclr = {
+            .name = name,
+            .id = (uint32_t)id,
+            .value = value
         }
-    );
+    });
 }
 
-static SlNodeIdx parseFuncDeclr(ParserState *p) {
-    uint32_t line = next(p).line;
+static bool parseFuncParams(ParserState *p, VarArr *names) {
+    if (!expectNext(p, SlToken_LeftParen)) return false;
 
-    if (!expect(p, SlToken_Ident)) {
-        return -1;
-    }
-    SlStrIdx name = next(p).as.ident;
-
-    if (!expectNext(p, SlToken_LeftParen)) {
-        return -1;
-    }
-    Strings params = { 0 };
     while (token(p).kind != SlToken_RightParen) {
-        if (!expect(p, SlToken_Ident)) {
-            return -1;
+        if (!expect(p, SlToken_Ident)) return false;
+        SlStrIdx param = token(p).as.ident;
+        int32_t id = addVar(p, param);
+        if (id == -1) {
+            varArrClear(names);
+            return false;
         }
-        uint32_t paramIdx = token(p).as.ident.idx;
-        uint32_t paramLen = token(p).as.ident.len;
-        if (!stringsPush(&params, token(p).as.ident)) {
-            return -1;
+
+        if (!varArrPush(names, (SlUniqueVar){ .name = param, .id = id })) {
+            slSetOutOfMemoryError(p->vm);
+            varArrClear(names);
+            return false;
         }
         next(p);
         if (token(p).kind == SlToken_Comma) {
@@ -359,28 +538,81 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
         }
     }
     next(p);
-    bool prevInFunc = p->inFunc;
-    p->inFunc = true;
-    SlNodeIdx body = parseBlock(p);
-    p->inFunc = prevInFunc;
+    return true;
+}
 
-    if (body == -1) {
+static bool getSharedVars(ParserState *p, VarArr *names) {
+    while (p->closedBlocks != NULL) {
+        slMapForeach(&p->closedBlocks->vars, SlStrMapBucket, var) {
+            if (var->value >> 16 == p->funcLevel) continue;
+            SlUniqueVar uniqueVar = {
+                .name = var->key,
+                .id = var->value & 0xffff
+            };
+            if (!varArrPush(names, uniqueVar)) {
+                slSetOutOfMemoryError(p->vm);
+                return false;
+            }
+        }
+        p->closedBlocks = slDelVarTable(p->closedBlocks);
+    }
+    return true;
+}
+
+static SlNodeIdx parseFuncDeclr(ParserState *p) {
+    uint32_t line = next(p).line;
+
+    if (!expect(p, SlToken_Ident)) return -1;
+    SlStrIdx name = next(p).as.ident;
+    int32_t id = addVar(p, name);
+    if (id == -1) return -1;
+    if (!pushVarTable(p)) return -1;
+
+    VarArr names = { 0 };
+    if (!parseFuncParams(p, &names)) return -1;
+    uint16_t paramCount = (uint16_t)names.len;
+
+    p->funcLevel++;
+    SlVarTable *prevClosedBlocks = p->closedBlocks;
+    p->closedBlocks = NULL;
+
+    SlNodeIdx body = parseFuncBody(p);
+    if (body == -1 || !getSharedVars(p, &names)) {
+        varArrClear(&names);
+        while (prevClosedBlocks != NULL) {
+            prevClosedBlocks = slDelVarTable(prevClosedBlocks);
+        }
         return -1;
     }
+    uint16_t sharedCount = names.len - paramCount;
+
+    p->closedBlocks = prevClosedBlocks;
+    p->funcLevel--;
+
+    SlNodeIdx value = addNode(p, (SlNode){
+        .kind = SlNode_Lambda,
+        .line = line,
+        .as.lambda = {
+            .vars = names.data,
+            .paramCount = paramCount,
+            .sharedCount = sharedCount,
+            .body = body
+        }
+    });
+    if (value == -1) return -1;
 
     return addNode(p, (SlNode){
         .kind = SlNode_FuncDeclr,
         .line = line,
         .as.funcDeclr = {
             .name = name,
-            .paramNames = params.data,
-            .paramCount = params.len,
-            .body = body
+            .value = value,
+            .id = id
         }
     });
 }
 
-static SlNodeIdx parseBlock(ParserState *p) {
+static SlNodeIdx parseFuncBody(ParserState *p) {
     uint32_t line = token(p).line;
     if (!expectNext(p, SlToken_LeftCurly)) {
         return -1;
@@ -390,13 +622,49 @@ static SlNodeIdx parseBlock(ParserState *p) {
     while (token(p).kind != SlToken_RightCurly) {
         SlNodeIdx stmnt = parseStatement(p);
         if (stmnt == -1) {
+            i32Clear(&nodes);
             return -1;
         }
         if (!i32Push(&nodes, stmnt)) {
+            i32Clear(&nodes);
+            slSetOutOfMemoryError(p->vm);
             return -1;
         }
     }
     next(p);
+
+    // The top variable frame had already been pushed, but it needs to be popped
+    popVarTable(p);
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_Block,
+        .line = line,
+        .as.block = {
+            .nodes = nodes.data,
+            .nodeCount = nodes.len
+        }
+    });
+}
+
+static SlNodeIdx parseBlock(ParserState *p) {
+    pushVarTable(p);
+    uint32_t line = next(p).line;
+    i32Arr nodes = { 0 };
+    while (token(p).kind != SlToken_RightCurly) {
+        SlNodeIdx stmnt = parseStatement(p);
+        if (stmnt == -1) {
+            i32Clear(&nodes);
+            return -1;
+        }
+        if (!i32Push(&nodes, stmnt)) {
+            i32Clear(&nodes);
+            slSetOutOfMemoryError(p->vm);
+            return -1;
+        }
+    }
+    next(p);
+    popVarTable(p);
+
     return addNode(p, (SlNode){
         .kind = SlNode_Block,
         .line = line,
@@ -439,18 +707,15 @@ static SlNodeIdx parseExpr(ParserState *p) {
         if (rhs == -1) {
             return -1;
         }
-        SlNodeIdx binOp = addNode(
-            p,
-            (SlNode){
-                .kind = SlNode_BinOp,
-                .line = line,
-                .as.binOp = {
-                    .lhs = lhs,
-                    .rhs = rhs,
-                    .op = kind == SlToken_Plus ? SlBinOp_Add : SlBinOp_Sub
-                }
+        SlNodeIdx binOp = addNode(p, (SlNode){
+            .kind = SlNode_BinOp,
+            .line = line,
+            .as.binOp = {
+                .lhs = lhs,
+                .rhs = rhs,
+                .op = kind == SlToken_Plus ? SlBinOp_Add : SlBinOp_Sub
             }
-        );
+        });
         if (binOp == -1) {
             return -1;
         }
@@ -534,14 +799,16 @@ static SlNodeIdx parseValue(ParserState *p) {
     }
     case SlToken_Ident: {
         SlToken tok = next(p);
-        return addNode(
-            p,
-            (SlNode){
-                .kind = SlNode_Access,
-                .line = tok.line,
-                .as.access = tok.as.ident,
-            }
-        );
+        int32_t id = refVar(p, tok.as.ident);
+        if (id == -1) return -1;
+        return addNode(p, (SlNode){
+            .kind = SlNode_Access,
+            .line = tok.line,
+            .as.access = {
+                .name = tok.as.ident,
+                .id = (uint32_t)id
+            },
+        });
     }
     default:
         setError(

@@ -10,11 +10,12 @@ typedef enum SlNodeKind {
 
     SlNode_Block,
     SlNode_VarDeclr,
+    SlNode_FuncDeclr,
     SlNode_BinOp,
     SlNode_NumInt,
     SlNode_Access,
     SlNode_Print,
-    SlNode_FuncDeclr,
+    SlNode_Lambda,
     SlNode_RetStmnt
 } SlNodeKind;
 
@@ -28,6 +29,10 @@ typedef enum SlBinOp {
 } SlBinOp;
 
 typedef int32_t SlNodeIdx;
+typedef struct SlUniqueVar {
+    SlStrIdx name;
+    uint32_t id;
+} SlUniqueVar;
 
 typedef struct SlNode {
     SlNodeKind kind;
@@ -35,9 +40,10 @@ typedef struct SlNode {
     union {
         struct {
             SlStrIdx name;
+            uint32_t id;
             SlNodeIdx value;
-        } varDeclr;
-        SlStrIdx access;
+        } varDeclr, funcDeclr;
+        SlUniqueVar access;
         struct {
             SlNodeIdx *nodes;
             uint32_t nodeCount;
@@ -47,11 +53,11 @@ typedef struct SlNode {
             SlBinOp op;
         } binOp;
         struct {
-            SlStrIdx name;
-            SlStrIdx *paramNames;
-            uint32_t paramCount;
+            SlUniqueVar *vars; // [params | shared vars]
+            uint16_t paramCount;
+            uint16_t sharedCount;
             SlNodeIdx body;
-        } funcDeclr;
+        } lambda;
         SlNodeIdx retStmnt;
         SlNodeIdx print;
         int64_t numInt;
@@ -66,6 +72,7 @@ typedef struct SlAst {
 } SlAst;
 
 SlAst slParse(SlVM *vm, SlSource *source);
+void slDestroyAst(SlAst *ast);
 void slPrintAst(const SlAst *ast);
 
 #endif // !SL_PARSER_H_
