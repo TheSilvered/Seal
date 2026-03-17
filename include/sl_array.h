@@ -9,22 +9,22 @@
 #include <stdlib.h>
 #include "clib_mem.h"
 
-#define slArrayType(type, name, prefix)                                        \
-    typedef struct name {                                                      \
-        type *data;                                                            \
+#define slArrayType(Type, Name, prefix)                                        \
+    typedef struct Name {                                                      \
+        Type *data;                                                            \
         uint32_t len, cap;                                                     \
-    } name;                                                                    \
-    bool prefix##Push(name *arr, type obj);                                    \
-    type *prefix##At(name *arr, int64_t idx);                                  \
-    type *prefix##At(name *arr, int64_t idx);                                  \
-    void prefix##Clear(name *arr);
+    } Name;                                                                    \
+    bool prefix##Push(Name *arr, Type obj);                                    \
+    Type *prefix##At(Name *arr, int64_t idx);                                  \
+    Type *prefix##At(Name *arr, int64_t idx);                                  \
+    void prefix##Clear(Name *arr);
 
-#define slArrayImpl(type, name, prefix)                                        \
-    bool prefix##Push(name *arr, type obj) {                                   \
+#define slArrayImpl(Type, Name, prefix)                                        \
+    bool prefix##Push(Name *arr, Type obj) {                                   \
         assert(arr->len <= arr->cap);                                          \
         if (arr->len == arr->cap) {                                            \
             uint32_t newCap = arr->cap == 0 ? 1 : arr->cap * 2;                \
-            type *newData = memExpand(arr->data, newCap, sizeof(*arr->data));  \
+            Type *newData = memExpand(arr->data, newCap, sizeof(*arr->data));  \
             if (newData == NULL) {                                             \
                 return false;                                                  \
             }                                                                  \
@@ -34,7 +34,7 @@
         arr->data[arr->len++] = obj;                                           \
         return true;                                                           \
     }                                                                          \
-    type *prefix##At(name *arr, int64_t idx) {                                 \
+    Type *prefix##At(Name *arr, int64_t idx) {                                 \
         if (idx < 0) {                                                         \
             idx += arr->len;                                                   \
         }                                                                      \
@@ -42,7 +42,7 @@
             fprintf(                                                           \
                 stderr,                                                        \
                 "index %"PRIi64" out of bounds (length %"PRIu32") for "        \
-                #name "\n",                                                    \
+                #Name "\n",                                                    \
                 idx, arr->len                                                  \
             );                                                                 \
             fflush(stderr);                                                    \
@@ -50,7 +50,7 @@
         }                                                                      \
         return &arr->data[(uint32_t)idx];                                      \
     }                                                                          \
-    void prefix##Clear(name *arr) {                                            \
+    void prefix##Clear(Name *arr) {                                            \
         arr->len = 0;                                                          \
         arr->cap = 0;                                                          \
         memFree(arr->data);                                                    \
