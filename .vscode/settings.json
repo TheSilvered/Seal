@@ -1,0 +1,8 @@
+{
+    "cmake.generator": "Ninja",
+    "cmake.debugConfig": {
+        "args": [
+            "../test/script.sl"
+        ]
+    },
+}
