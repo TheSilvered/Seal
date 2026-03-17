@@ -255,7 +255,10 @@ static bool appendIdent(LexerState *l) {
 
     const char *identStr = (const char *)(l->text + start);
     for (size_t i = 0; i < keywordsLen; i++) {
-        if (strncmp(identStr, keywords[i].str, len) == 0) {
+        if (
+            strncmp(identStr, keywords[i].str, len) == 0
+            && keywords[i].str[len] == '\0'
+        ) {
             return appendToken(
                 l,
                 (SlToken){ .kind = keywords[i].kind, .line = line }
@@ -277,4 +280,13 @@ static bool appendIdent(LexerState *l) {
             .as.ident.idx = strIdx
         }
     );
+}
+
+bool slStrIdxEq(SlStrIdx str1, SlStrIdx str2, uint8_t *strs) {
+    return str1.len == str2.len
+        && 0 == memcmp(
+            strs + str1.idx,
+            strs + str2.idx,
+            str1.len
+        );
 }
