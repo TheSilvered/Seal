@@ -51,8 +51,8 @@ typedef struct SlTokens {
     size_t tokenCount;
 } SlTokens;
 
-SlTokens slTokenize(SlVM *vm, SlSource *source);
+SlTokens slTokenize(SlVM *vm, const SlSource *source);
 const char *slTokenKindToStr(SlTokenKind kind);
-bool slStrIdxEq(SlStrIdx s1, SlStrIdx s2, uint8_t *strs);
+bool slStrIdxEq(SlStrIdx s1, SlStrIdx s2, const uint8_t *strs);
 
 #endif // !SL_LEXER_H_

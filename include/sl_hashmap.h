@@ -122,7 +122,7 @@
                 varName = NULL                                                 \
             )
 
-uint32_t slFNVHash(const void *data, size_t len);
+uint32_t slMemHash(const void *data, size_t len);
 
 slHashMapType(SlStrIdx, uint32_t, SlStrMap, slStrMap)
 

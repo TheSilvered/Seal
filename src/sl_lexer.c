@@ -14,8 +14,8 @@ typedef struct LexerState {
     SlVM *vm;
 
     const char *path;
-    uint8_t *text;
-    uint32_t len;
+    const uint8_t *text;
+    const uint32_t len;
 
     uint8_t *strs;
     uint32_t strsLen;
@@ -40,7 +40,7 @@ static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
 static void setError(LexerState *l, const char *fmt, ...);
 static bool appendToken(LexerState *l, SlToken token);
 static bool appendSimpleToken(LexerState *l, SlTokenKind kind);
-static uint32_t appendStr(LexerState *l, uint8_t *str, uint32_t len);
+static uint32_t appendStr(LexerState *l, const uint8_t *str, uint32_t len);
 static bool appendNumber(LexerState *l);
 static bool appendIdent(LexerState *l);
 
@@ -92,7 +92,7 @@ const char *slTokenKindToStr(SlTokenKind kind) {
     }
 }
 
-SlTokens slTokenize(SlVM *vm, SlSource *source) {
+SlTokens slTokenize(SlVM *vm, const SlSource *source) {
     LexerState l = {
         .vm = vm,
         .path = source->path,
@@ -198,7 +198,7 @@ static bool appendSimpleToken(LexerState *l, SlTokenKind kind) {
     return appendToken(l, (SlToken){ .kind = kind, .line = l->line });
 }
 
-static uint32_t appendStr(LexerState *l, uint8_t *str, uint32_t len) {
+static uint32_t appendStr(LexerState *l, const uint8_t *str, uint32_t len) {
     for (uint32_t i = 0; i + len <= l->strsLen; i++) {
         for (uint32_t j = 0; j < len; j++) {
             if (l->strs[i + j] != str[j]) {
@@ -282,7 +282,7 @@ static bool appendIdent(LexerState *l) {
     );
 }
 
-bool slStrIdxEq(SlStrIdx str1, SlStrIdx str2, uint8_t *strs) {
+bool slStrIdxEq(SlStrIdx str1, SlStrIdx str2, const uint8_t *strs) {
     return str1.len == str2.len
         && 0 == memcmp(
             strs + str1.idx,

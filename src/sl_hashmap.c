@@ -1,7 +1,7 @@
 #include "sl_hashmap.h"
 #include <string.h>
 
-uint32_t slFNVHash(const void *data, size_t len) {
+uint32_t slMemHash(const void *data, size_t len) {
     const uint8_t *bytes = (const uint8_t *)data;
 
     uint32_t hash = 2166136261u;
@@ -18,7 +18,7 @@ static bool strMapEq(SlStrIdx str1, SlStrIdx str2, void *userData) {
 }
 
 static uint32_t strMapHash(SlStrIdx str, void *userData) {
-    return slFNVHash((uint8_t *)userData + str.idx, str.len);
+    return slMemHash((uint8_t *)userData + str.idx, str.len);
 }
 
 slHashMapImpl(SlStrIdx, uint32_t, SlStrMap, slStrMap, strMapEq, strMapHash)

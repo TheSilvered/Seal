@@ -51,7 +51,7 @@ bool keyEq(char *s1, char *s2, void *userData) {
 
 uint32_t keyHash(char *key, void *userData) {
     (void)userData;
-    return slFNVHash(key, strlen(key));
+    return slMemHash(key, strlen(key));
 }
 
 slHashMapType(char *, int, StrMap, strMap)
