@@ -32,7 +32,7 @@ typedef enum SlObjType {
     SlObj_Map,
     SlObj_Func,
     SlObj_Struct,
-    SlObj_SharedSlots, // internal
+    SlObj_SharedSlot, // internal
 
     // Frozen types
 
@@ -51,7 +51,7 @@ typedef struct SlMap SlMap;
 typedef struct SlFunc SlFunc;
 typedef struct SlStruct SlStruct;
 typedef struct SlBytecode SlBytecode;
-typedef struct SlSharedSlots SlSharedSlots;
+typedef struct SlSharedSlot SlSharedSlot;
 
 typedef struct SlGCObj {
     size_t refCount;
@@ -70,7 +70,7 @@ typedef struct SlObj {
         SlFunc *func;
         SlStruct *structure;
         SlBytecode *bytecode;
-        SlSharedSlots *sharedSlots;
+        SlSharedSlot *sharedSlot;
         SlGCObj *gcObj;
     } as;
 } SlObj;
@@ -101,7 +101,8 @@ struct SlFunc {
     SlGCObj asGCObj;
     SlStr *name;
     SlBytecode *bytecode;
-    SlSharedSlots *sharedSlots;
+    uint16_t sharedSlotCount;
+    SlSharedSlot *sharedSlots[0];
 };
 
 typedef struct SlMethodTable {
@@ -140,10 +141,9 @@ struct SlBytecode {
     const SlDebugInfo *debugInfo;
 };
 
-struct SlSharedSlots {
+struct SlSharedSlot {
     SlGCObj asGCObj;
-    size_t slotCount;
-    SlObj slots[1];
+    SlObj value;
 };
 
 typedef struct SlSource {
@@ -188,7 +188,6 @@ typedef struct SlVM {
     SlCallStack callStack;
     uint64_t pc;
     SlBytecode *bytecode;
-    SlSharedSlots *sharedSlots;
     SlObj *stackPtr;
 } SlVM;
 

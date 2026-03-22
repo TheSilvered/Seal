@@ -150,7 +150,7 @@ SlObj slFrozenFuncNew(
     func->asGCObj.refCount = 1;
     func->name = name.as.str;
     func->bytecode = bytecode.as.bytecode;
-    func->sharedSlots = NULL;
+    func->sharedSlotCount = 0;
 
     return (SlObj){ .type = SlObj_FrozenFunc, .as.func = func };
 }
@@ -233,8 +233,8 @@ const char *slTypeName(SlObj o) {
         return "Func";
     case SlObj_Struct:
         return "Struct";
-    case SlObj_SharedSlots:
-        return "internal:SharedSlots";
+    case SlObj_SharedSlot:
+        return "internal:SharedSlot";
     case SlObj_FrozenStr:
         return "Str*";
     case SlObj_FrozenList:
@@ -289,7 +289,7 @@ static inline void destroyObj(SlObj o) {
         memFree(o.as.bytecode);
         break;
     case SlObj_List:
-        o.as.gcObj->refCount = SIZE_T_MAX;
+        o.as.gcObj->refCount = SIZE_MAX;
         for (size_t i = 0; i < o.as.list->len; i++) {
             slDelRef(o.as.list->objs[i]);
         }
@@ -299,7 +299,7 @@ static inline void destroyObj(SlObj o) {
         memFree(o.as.list);
         break;
     case SlObj_Map:
-        o.as.gcObj->refCount = SIZE_T_MAX;
+        o.as.gcObj->refCount = SIZE_MAX;
         for (size_t i = 0; i < o.as.map->cap; i++) {
             slDelRef(o.as.map->entries[i].key);
             slDelRef(o.as.map->entries[i].value);
@@ -308,7 +308,7 @@ static inline void destroyObj(SlObj o) {
         memFree(o.as.map);
         break;
     case SlObj_Func:
-        o.as.gcObj->refCount = SIZE_T_MAX;
+        o.as.gcObj->refCount = SIZE_MAX;
         slDelRef((SlObj){
             .type = SlObj_FrozenStr,
             .as.str = o.as.func->name
@@ -317,16 +317,16 @@ static inline void destroyObj(SlObj o) {
             .type = SlObj_Bytecode,
             .as.bytecode = o.as.func->bytecode
         });
-        if (o.as.func->sharedSlots != NULL) {
+        for (uint16_t i = 0; i < o.as.func->sharedSlotCount; i++) {
             slDelRef((SlObj){
-                .type = SlObj_SharedSlots,
-                .as.sharedSlots = o.as.func->sharedSlots
+                .type = SlObj_SharedSlot,
+                .as.sharedSlot = o.as.func->sharedSlots[i]
             });
         }
         memFree(o.as.func);
         break;
     case SlObj_Struct:
-        o.as.gcObj->refCount = SIZE_T_MAX;
+        o.as.gcObj->refCount = SIZE_MAX;
         if (o.as.structure->mt != NULL
             && o.as.structure->mt->destructor != NULL
         ) {
@@ -334,12 +334,10 @@ static inline void destroyObj(SlObj o) {
         }
         memFree(o.as.structure);
         break;
-    case SlObj_SharedSlots:
-        o.as.gcObj->refCount = SIZE_T_MAX;
-        for (size_t i = 0; i < o.as.sharedSlots->slotCount; i++) {
-            slDelRef(o.as.sharedSlots->slots[i]);
-        }
-        memFree(o.as.sharedSlots);
+    case SlObj_SharedSlot:
+        o.as.gcObj->refCount = SIZE_MAX;
+        slDelRef(o.as.sharedSlot->value);
+        memFree(o.as.sharedSlot);
         break;
     default:
         assert(false && "unknown type");
