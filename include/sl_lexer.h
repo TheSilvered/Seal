@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "sl_array.h"
 #include "sl_vm.h"
 
 typedef enum SlTokenKind {
@@ -31,10 +32,6 @@ typedef enum SlTokenKind {
 
     SlToken_Eof
 } SlTokenKind;
-
-typedef struct SlStrIdx {
-    uint32_t idx, len;
-} SlStrIdx;
 
 typedef struct SlToken {
     SlTokenKind kind;

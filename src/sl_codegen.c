@@ -6,6 +6,13 @@
 #define _maxRegs ((1 << 15) + 0x80 - 1)
 #define _strFmt(str) (int)(str).len, (char *)(g->ast.strs + (str).idx)
 
+/*
+- I know which variables will be captured by subroutines
+    call: create shared slots for all of them, recreate them if the variable is redefined
+    exit: copy all stack values and remove the references
+    ! may lead to unnecessary allocations if a value is only conditionally captured
+*/
+
 slArrayType(SlObj, Constants, consts)
 slArrayImpl(SlObj, Constants, consts)
 

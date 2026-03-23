@@ -10,7 +10,6 @@ typedef enum SlNodeKind {
 
     SlNode_Block,
     SlNode_VarDeclr,
-    SlNode_FuncDeclr,
     SlNode_BinOp,
     SlNode_NumInt,
     SlNode_Access,
@@ -29,10 +28,6 @@ typedef enum SlBinOp {
 } SlBinOp;
 
 typedef int32_t SlNodeIdx;
-typedef struct SlUniqueVar {
-    SlStrIdx name;
-    uint32_t id;
-} SlUniqueVar;
 
 typedef struct SlNode {
     SlNodeKind kind;
@@ -40,22 +35,23 @@ typedef struct SlNode {
     union {
         struct {
             SlStrIdx name;
-            uint32_t id;
             SlNodeIdx value;
-        } varDeclr, funcDeclr;
-        SlUniqueVar access;
+        } varDeclr;
+        SlStrIdx access;
         struct {
             SlNodeIdx *nodes;
+            SlStrIdx *sharedVars;
             uint32_t nodeCount;
+            uint32_t sharedVarsCount;
+            // TODO: add implicit declaration of functions
         } block;
         struct {
             SlNodeIdx lhs, rhs;
             SlBinOp op;
         } binOp;
         struct {
-            SlUniqueVar *vars; // [params | shared vars]
+            SlStrIdx *params;
             uint16_t paramCount;
-            uint16_t sharedCount;
             SlNodeIdx body;
         } lambda;
         SlNodeIdx retStmnt;

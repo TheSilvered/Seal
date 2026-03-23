@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+
 #include "clib_mem.h"
 
 #define slArrayType(Type, Name, prefix)                                        \
@@ -57,7 +58,13 @@
         arr->data = NULL;                                                      \
     }
 
-slArrayType(int32_t, i32Arr, i32)
-slArrayType(uint8_t, u8Arr, u8)
+slArrayType(int32_t, SlI32Arr, slI32)
+slArrayType(uint8_t, SlU8Arr, slU8)
+
+typedef struct SlStrIdx {
+    uint32_t idx, len;
+} SlStrIdx;
+
+slArrayType(SlStrIdx, SlStrArr, slStr)
 
 #endif // !SL_ARRAY_H_
