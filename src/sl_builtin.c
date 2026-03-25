@@ -1,3 +1,6 @@
+#include <assert.h>
+#include <inttypes.h>
+
 #include "sl_builtin.h"
 #include "sl_vm.h"
 

@@ -1,4 +1,7 @@
 var a = 10;
-func f() {
+
+print a;
+
+func f(a b c) {
     print a;
 }

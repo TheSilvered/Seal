@@ -6,8 +6,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#include "sl_array.h"
-
 #define slObjIsSmall(obj) ((obj).type <= SlObj_Float)
 #define slObjIsNumeric(obj)                                                    \
     ((obj).type == SlObj_Int || (obj).type == SlObj_Float)

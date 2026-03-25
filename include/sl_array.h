@@ -9,24 +9,25 @@
 #include <stdlib.h>
 
 #include "clib_mem.h"
+#include "sl_vm.h"
 
 #define slArrayType(Type, Name, prefix)                                        \
     typedef struct Name {                                                      \
         Type *data;                                                            \
         uint32_t len, cap;                                                     \
     } Name;                                                                    \
-    bool prefix##Push(Name *arr, Type obj);                                    \
-    Type *prefix##At(Name *arr, int64_t idx);                                  \
+    bool prefix##Push(SlVM *vm, Name *arr, Type obj);                          \
     Type *prefix##At(Name *arr, int64_t idx);                                  \
     void prefix##Clear(Name *arr);
 
 #define slArrayImpl(Type, Name, prefix)                                        \
-    bool prefix##Push(Name *arr, Type obj) {                                   \
+    bool prefix##Push(SlVM *vm, Name *arr, Type obj) {                         \
         assert(arr->len <= arr->cap);                                          \
         if (arr->len == arr->cap) {                                            \
             uint32_t newCap = arr->cap == 0 ? 1 : arr->cap * 2;                \
             Type *newData = memExpand(arr->data, newCap, sizeof(*arr->data));  \
             if (newData == NULL) {                                             \
+                slSetOutOfMemoryError(vm);                                     \
                 return false;                                                  \
             }                                                                  \
             arr->data = newData;                                               \

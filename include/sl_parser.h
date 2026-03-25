@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "sl_lexer.h"
 #include "sl_vm.h"
+#include "sl_hashmap.h"
 
 typedef enum SlNodeKind {
     SlNode_INVALID,
@@ -40,10 +41,8 @@ typedef struct SlNode {
         SlStrIdx access;
         struct {
             SlNodeIdx *nodes;
-            SlStrIdx *sharedVars;
+            SlStrMap *vars;
             uint32_t nodeCount;
-            uint32_t sharedVarsCount;
-            // TODO: add implicit declaration of functions
         } block;
         struct {
             SlNodeIdx lhs, rhs;

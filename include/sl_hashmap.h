@@ -7,6 +7,7 @@
 
 #include "clib_mem.h"
 #include "sl_lexer.h"
+#include "sl_vm.h"
 
 #define slHashMapType(KeyType, ValueType, Name, prefix)                        \
     typedef struct Name##Bucket {                                              \
@@ -20,7 +21,7 @@
         uint32_t len;                                                          \
         uint32_t cap; /* Power of two */                                       \
     } Name;                                                                    \
-    bool prefix##Set(Name *map, KeyType key, ValueType value);                 \
+    bool prefix##Set(SlVM *vm, Name *map, KeyType key, ValueType value);       \
     ValueType *prefix##Get(Name *map, KeyType key);                            \
     void prefix##Clear(Name *map);
 
@@ -51,9 +52,10 @@
         map->cap = newCap;                                                     \
         return true;                                                           \
     }                                                                          \
-    bool prefix##Set(Name *map, KeyType key, ValueType value) {                \
+    bool prefix##Set(SlVM *vm, Name *map, KeyType key, ValueType value) {      \
         if (map->cap / 2 + map->cap / 4 < map->len + 1) {                      \
             if (!prefix##__grow(map)) {                                        \
+                slSetOutOfMemoryError(vm);                                     \
                 return false;                                                  \
             }                                                                  \
         }                                                                      \
@@ -107,6 +109,7 @@
         return NULL;                                                           \
     }                                                                          \
     void prefix##Clear(Name *map) {                                            \
+        if (map == NULL) return;                                               \
         memFree(map->buckets);                                                 \
         map->buckets = NULL;                                                   \
         map->len = 0;                                                          \
@@ -114,7 +117,7 @@
     }
 
 #define slMapForeach(map, BucketType, varName)                                 \
-    for (uint32_t map__i = 0; map__i < (map)->cap; map__i++)                   \
+    for (uint32_t map__i = 0; (map) && map__i < (map)->cap; map__i++)          \
         if ((map)->buckets[map__i].hash != 0)                                  \
             for (                                                              \
                 BucketType *varName = &(map)->buckets[map__i];                 \

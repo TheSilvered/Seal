@@ -47,9 +47,9 @@ static bool appendIdent(LexerState *l);
 const char *slTokenKindToStr(SlTokenKind kind) {
     switch (kind) {
     case SlToken_Ident:
-        return "<identifier>";
+        return "an identifier";
     case SlToken_NumInt:
-        return "<number>";
+        return "a number";
     case SlToken_Plus:
         return "'+'";
     case SlToken_Star:
@@ -81,14 +81,13 @@ const char *slTokenKindToStr(SlTokenKind kind) {
     case SlToken_Equals:
         return "'='";
     case SlToken_KwVar:
-        return "'var'";
+        return "the keyword 'var'";
     case SlToken_KwFunc:
-        return "'func'";
+        return "the keyword 'func'";
+    case SlToken_KwPrint:
+        return "the keyword 'print'";
     case SlToken_Eof:
-        return "<end of file>";
-    default:
-        assert("unreachable" && false);
-        return "";
+        return "the end of the file";
     }
 }
 
@@ -187,11 +186,7 @@ static void setError(LexerState *l, const char *fmt, ...) {
 }
 
 static bool appendToken(LexerState *l, SlToken token) {
-    if (!tokensPush(&l->tokens, token)) {
-        slSetOutOfMemoryError(l->vm);
-        return false;
-    }
-    return true;
+    return tokensPush(l->vm, &l->tokens, token);
 }
 
 static bool appendSimpleToken(LexerState *l, SlTokenKind kind) {
