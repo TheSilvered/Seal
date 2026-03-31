@@ -54,8 +54,8 @@ SlObj slToStr(SlVM *vm, SlObj o) {
     switch (o.type & 0xff) {
     case SlObj_Null:
         return slFrozenStrNew(vm, SlU8("null"));
-    case SlObj_EmptySlot:
-        return slFrozenStrNew(vm, SlU8("internal:empty_slot"));
+    case SlObj_Empty:
+        return slFrozenStrNew(vm, SlU8("<internal:empty>"));
     case SlObj_Bool:
         if (o.as.boolean) {
             return slFrozenStrNew(vm, SlU8("true"));
@@ -68,8 +68,8 @@ SlObj slToStr(SlVM *vm, SlObj o) {
         return slFrozenStrFmt(vm, "%.15g", o.as.numFloat);
     case SlObj_Str:
         return slNewRef(o);
-    case SlObj_Bytecode:
-        return slFrozenStrNew(vm, SlU8("internal:bytecode"));
+    case SlObj_Prototype:
+        return slFrozenStrNew(vm, SlU8("<internal:prototype>"));
     default:
         assert(false && "TODO slToStr");
         return slFrozenStrNew(vm, SlU8("TODO"));

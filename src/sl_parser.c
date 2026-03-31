@@ -33,16 +33,26 @@ is closed all variables with a higher funcLevel are added to an array of shared
 variables.
 */
 
+typedef struct VarTable {
+    struct VarTable *parent;
+    SlStrMap *vars;
+    uint32_t funcLevel;
+    uint16_t sharedCount;
+} VarTable;
+
 typedef struct ParserState {
     SlVM *vm;
     const char *path;
     SlTokens tokens;
     Nodes nodes;
     uint32_t idx;
-    SlStrMap *vars;
+    uint32_t funcLevel;
+    SlStrMap *vars; // used when parsing
+    VarTable *vt; // used when resolving variable names
 } ParserState;
 
 static void setError(ParserState *p, const char *fmt, ...);
+static void setErrorWLine(ParserState *p, uint32_t line, const char *fmt, ...);
 
 static SlNodeIdx addNode(ParserState *p, SlNode node);
 static SlToken token(ParserState *p);
@@ -51,6 +61,9 @@ static bool expect(ParserState *p, SlTokenKind kind);
 static bool expectNext(ParserState *p, SlTokenKind kind);
 
 static bool ensureVars(ParserState *p);
+static bool pushVT(ParserState *p, SlStrMap *vars);
+static void popVT(ParserState *p);
+static bool addVar(ParserState *p, SlStrIdx name);
 
 static SlNodeIdx parseFile(ParserState *p);
 static SlNodeIdx parseStatement(ParserState *p);
@@ -62,6 +75,8 @@ static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
 static SlNodeIdx parseValue(ParserState *p);
 
+static bool resolveVars(ParserState *p, SlNodeIdx idx);
+
 static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent);
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent);
 static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent);
@@ -69,6 +84,7 @@ static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
 static void printNumInt(SlNode node, uint32_t indent);
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent);
 static void printPrint(SlNode node, const SlAst *ast, uint32_t indent);
+static void printRetStmnt(SlNode node, const SlAst *ast, uint32_t indent);
 static void printLambda(SlNode node, const SlAst *ast, uint32_t indent);
 
 void slPrintAst(const SlAst *ast) {
@@ -101,8 +117,11 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
     case SlNode_Lambda:
         printLambda(node, ast, indent);
         break;
-    default:
-        assert(false && "unhandled node type");
+    case SlNode_RetStmnt:
+        printRetStmnt(node, ast, indent);
+            break;
+    case SlNode_INVALID:
+        assert(false && "invalid node when printing");
     }
 }
 
@@ -117,13 +136,17 @@ static void printStrs(const SlAst *ast, SlStrIdx *strs, uint32_t count) {
 }
 
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
-    printf("%*sblock\n", indent * INDENT_WIDTH, "");
+    printf(
+        "%*sblock [%"PRIu32"]\n",
+        indent * INDENT_WIDTH, "",
+        node.as.block.sharedCount
+    );
     slMapForeach(node.as.block.vars, SlStrMapBucket, var) {
         printf(
-            "%*s - "S_Fmt" at %"PRIu32"\n",
+            "%*s- "S_Fmt" @ %"PRIu32" * %"PRIi32"\n",
             indent * INDENT_WIDTH, "",
             S_Arg(var->key, ast->strs),
-            var->value
+            var->value & 0xff, (int32_t)(var->value >> 16) - 1
         );
     }
     for (uint32_t i = 0; i < node.as.block.nodeCount; i++) {
@@ -184,10 +207,15 @@ static void printPrint(SlNode node, const SlAst *ast, uint32_t indent) {
     printNode(node.as.print, ast, indent + 1);
 }
 
+static void printRetStmnt(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf("%*sreturn\n", indent * INDENT_WIDTH, "");
+    printNode(node.as.print, ast, indent + 1);
+}
+
 static void printLambda(SlNode node, const SlAst *ast, uint32_t indent) {
-    printf("%*slambda (", indent * INDENT_WIDTH, "");
+    printf("%*slambda |", indent * INDENT_WIDTH, "");
     printStrs(ast, node.as.lambda.params, node.as.lambda.paramCount);
-    printf(")\n");
+    printf("|\n");
     printNode(node.as.lambda.body, ast, indent + 1);
 }
 
@@ -239,6 +267,15 @@ SlAst slParse(SlVM *vm, SlSource *source) {
         memFree(p.vars);
         return (SlAst){ .root = -1 };
     }
+
+    p.funcLevel = 0;
+    p.vars = NULL;
+    if (!resolveVars(&p, root)) {
+        // now p.vars is always owned by a node, no need to free here
+        destroyNodes(p.nodes.data, p.nodes.len);
+        return (SlAst){ .root = -1 };
+    }
+
     memFree(p.tokens.tokens);
 
     SlAst ast = {
@@ -262,6 +299,16 @@ static void setError(ParserState *p, const char *fmt, ...) {
     va_end(args);
 
     uint32_t line = token(p).line;
+    slSetError(p->vm, "%s:%"PRIu32": %s", p->path, line, buf);
+}
+
+static void setErrorWLine(ParserState *p, uint32_t line, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    char buf[64];
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
     slSetError(p->vm, "%s:%"PRIu32": %s", p->path, line, buf);
 }
 
@@ -433,18 +480,7 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
     if (!expect(p, SlToken_Ident)) return -1;
     SlStrIdx name = next(p).as.ident;
 
-    if (!ensureVars(p)) return -1;
-
-    if (slStrMapGet(p->vars, name) != NULL) {
-        setError(
-            p,
-            "redefinition of the function "S_Fmt,
-            S_Arg(name, p->tokens.strs)
-        );
-        return -1;
-    }
-    if (!slStrMapSet(p->vm, p->vars, name, 0))
-        return -1;
+    if (!addVar(p, name)) return -1;
 
     SlStrArr params = { 0 };
     if (!parseFuncParams(p, &params)) return -1;
@@ -455,7 +491,7 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
         goto error;
 
     for (uint32_t i = 0; i < params.len; i++) {
-        if (!slStrMapSet(p->vm, p->vars, params.data[i], 0)) goto error;
+        if (!addVar(p, params.data[i])) goto error;
     }
 
     SlNodeIdx body = parseBlock(p, true);
@@ -661,4 +697,123 @@ static SlNodeIdx parseValue(ParserState *p) {
         );
         return -1;
     }
+}
+
+static bool pushVT(
+    ParserState *p,
+    SlStrMap *vars
+) {
+    VarTable *vt = memAlloc(1, sizeof(*vt));
+    if (vt == NULL) {
+        slSetOutOfMemoryError(p->vm);
+        return false;
+    }
+
+    if (vars == NULL) {
+        vars = memAllocZeroed(1, sizeof(*vars));
+        if (vars == NULL) {
+            slSetOutOfMemoryError(p->vm);
+            memFree(vt);
+            return false;
+        }
+        vars->userData = p->tokens.strs;
+    }
+
+    vt->parent = p->vt;
+    vt->funcLevel = p->funcLevel;
+    vt->vars = vars;
+    vt->sharedCount = 0;
+
+    p->vt = vt;
+    p->vars = p->vt->vars;
+    return true;
+}
+
+static void popVT(ParserState *p) {
+    VarTable *vt = p->vt;
+    p->vt = p->vt->parent;
+    p->vars = p->vt ? p->vt->vars : NULL;
+    memFree(vt);
+}
+
+static bool addVar(ParserState *p, SlStrIdx name) {
+    if (!ensureVars(p)) return false;
+    if (slStrMapGet(p->vars, name) != NULL) return true;
+    return slStrMapSet(p->vm, p->vars, name, p->vars->len);
+}
+
+static bool refVar(ParserState *p, SlStrIdx name) {
+    assert(p->vt != NULL);
+    uint32_t funcLevel = p->vt->funcLevel;
+    VarTable *vt = p->vt;
+    while (vt) {
+        uint32_t *var = slStrMapGet(vt->vars, name);
+        if (var != NULL) {
+            // If the variable is in an outer function and is not already shared
+            // then add a share index
+            if (vt->funcLevel != funcLevel && *var >> 16 == 0) {
+                *var = ++vt->sharedCount << 16 | *var;
+            }
+            return true;
+        }
+        vt = vt->parent;
+    }
+    return false;
+}
+
+static bool resolveBlockVars(ParserState *p, SlNode *node);
+
+static bool resolveVars(ParserState *p, SlNodeIdx idx) {
+    SlNode *node = nodesAt(&p->nodes, idx);
+    switch (node->kind) {
+    case SlNode_Block:
+        return resolveBlockVars(p, node);
+    case SlNode_VarDeclr:
+        if (!resolveVars(p, node->as.varDeclr.value)) return false;
+        return addVar(p, node->as.varDeclr.name);
+    case SlNode_BinOp:
+        return resolveVars(p, node->as.binOp.lhs)
+            && resolveVars(p, node->as.binOp.rhs);
+    case SlNode_NumInt:
+        return true;
+    case SlNode_Access:
+        if (!refVar(p, node->as.access)) {
+            setErrorWLine(
+                p,
+                node->line,
+                "unknown variable %"S_Fmt,
+                S_Arg(node->as.access, p->tokens.strs)
+            );
+            return false;
+        }
+        return true;
+    case SlNode_Print:
+        return resolveVars(p, node->as.print);
+    case SlNode_Lambda:
+        p->funcLevel++;
+        if (!resolveVars(p, node->as.lambda.body)) return false;
+        p->funcLevel--;
+        return true;
+    case SlNode_RetStmnt:
+        return node->as.retStmnt == -1
+            ? true
+            : resolveVars(p, node->as.retStmnt);
+    case SlNode_INVALID:
+        assert(false && "invalid node found");
+    }
+    return false;
+}
+
+static bool resolveBlockVars(ParserState *p, SlNode *node) {
+    if (!pushVT(p, node->as.block.vars)) {
+        return false;
+    }
+    node->as.block.vars = p->vt->vars;
+
+    for (uint32_t i = 0; i < node->as.block.nodeCount; i++) {
+        if (!resolveVars(p, node->as.block.nodes[i])) return false;
+    }
+    node->as.block.sharedCount = p->vt->sharedCount;
+    popVT(p);
+    return true;
 }

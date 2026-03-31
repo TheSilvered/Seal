@@ -52,7 +52,7 @@ static SlObj *pushSlots(SlVM *vm, uint16_t count) {
         top->used = 0;
         vm->stackTop = top;
         for (uint16_t i = 0; i < newCap; i++) {
-            top->slots[i].type = SlObj_EmptySlot;
+            top->slots[i].type = SlObj_Empty;
         }
     }
 

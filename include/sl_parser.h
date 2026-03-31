@@ -42,6 +42,7 @@ typedef struct SlNode {
         struct {
             SlNodeIdx *nodes;
             SlStrMap *vars;
+            uint32_t sharedCount;
             uint32_t nodeCount;
         } block;
         struct {

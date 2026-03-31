@@ -4,11 +4,10 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
-#include <limits.h>
 #include <assert.h>
 #include <errno.h>
 
-static inline void destroyObj(SlObj o);
+static void destroyObj(SlObj o);
 
 SlSource slSourceFromCStr(const char *str) {
     size_t len = strlen(str);
@@ -136,61 +135,41 @@ SlObj slFrozenStrFmt(SlVM *vm, const char *fmt, ...) {
     return (SlObj){ .type = SlObj_FrozenStr, .as.str = str };
 }
 
-SlObj slFrozenFuncNew(
+SlObj slPrototypeNew(
     SlVM *vm,
-    SlObj name,
-    SlObj bytecode
-) {
-    SlFunc *func = memAlloc(1, sizeof(*func));
-    if (func == NULL) {
-        slSetOutOfMemoryError(vm);
-        return slNull;
-    }
-
-    func->asGCObj.refCount = 1;
-    func->name = name.as.str;
-    func->bytecode = bytecode.as.bytecode;
-    func->sharedSlotCount = 0;
-
-    return (SlObj){ .type = SlObj_FrozenFunc, .as.func = func };
-}
-
-SlObj slBytecodeNew(
-    SlVM *vm,
-    const uint8_t *bytes,
+    uint8_t *bytes,
     uint32_t size,
+    SlObj *constants,
+    uint32_t constCount,
+    SlSharedInfo *sharedInfo,
+    uint16_t sharedCount,
     uint16_t frameSize,
-    const SlObj *constants,
-    uint32_t constantCount,
-    const SlDebugInfo *debugInfo
+    SlDebugInfo *debugInfo
 ) {
-    // Object layout:
-    // | SlBytecode struct |
-    // | Constants array   |
-    // | Bytecode          |
-    SlBytecode *bc = memAllocBytes(
-        sizeof(*bc)
-        + sizeof(*constants) * constantCount
-        + sizeof(*bytes) * size
-    );
+    SlPrototype *proto = memAllocBytes(sizeof(*proto));
 
-    if (bc == NULL) {
+    if (proto == NULL) {
         slSetOutOfMemoryError(vm);
+        memFree(bytes);
+        for (uint32_t i = 0; i < constCount; i++) {
+            slDelRef(constants[i]);
+        }
+        memFree(constants);
+        memFree(sharedInfo);
         return slNull;
     }
 
-    bc->asGCObj.refCount = 1;
-    bc->bytes = (uint8_t *)(bc + 1) + (sizeof(*constants) * constantCount);
-    bc->size = size;
-    bc->frameSize = frameSize;
-    bc->constants = (SlObj *)(bc + 1);
-    bc->constantCount = constantCount;
-    bc->debugInfo = debugInfo;
+    proto->asGCObj.refCount = 1;
+    proto->bytes = bytes;
+    proto->size = size;
+    proto->constants = constants;
+    proto->constCount = constCount;
+    proto->sharedInfo = sharedInfo;
+    proto->sharedCount = sharedCount;
+    proto->frameSize = frameSize;
+    proto->debugInfo = debugInfo;
 
-    memcpy(bc->bytes, bytes, size * sizeof(*bytes));
-    memcpy(bc->constants, constants, constantCount * sizeof(*constants));
-
-    return (SlObj){ .type = SlObj_Bytecode, .as.bytecode = bc };
+    return (SlObj){ .type = SlObj_Prototype, .as.proto = proto };
 }
 
 SlObj slNewRef(SlObj obj) {
@@ -210,11 +189,13 @@ void slDelRef(SlObj obj) {
 }
 
 const char *slTypeName(SlObj o) {
-    switch (o.type) {
+    switch ((SlObjType)o.type) {
     case SlObj_Null:
         return "Null";
-    case SlObj_EmptySlot:
-        return "internal:EmptySlot";
+    case SlObj_Empty:
+        return "<internal:Empty>";
+    case SlObj_StackIdx:
+        return "<internal:StackIdx>";
     case SlObj_Bool:
         return "Bool";
     case SlObj_Int:
@@ -223,8 +204,8 @@ const char *slTypeName(SlObj o) {
         return "Float";
     case SlObj_Str:
         return "Str";
-    case SlObj_Bytecode:
-        return "internal:Bytecode";
+    case SlObj_Prototype:
+        return "<internal:Prototype>";
     case SlObj_List:
         return "List";
     case SlObj_Map:
@@ -234,19 +215,15 @@ const char *slTypeName(SlObj o) {
     case SlObj_Struct:
         return "Struct";
     case SlObj_SharedSlot:
-        return "internal:SharedSlot";
+        return "<internal:SharedSlot>";
     case SlObj_FrozenStr:
         return "Str*";
     case SlObj_FrozenList:
         return "List*";
     case SlObj_FrozenMap:
         return "Map*";
-    case SlObj_FrozenFunc:
-        return "Func*";
-    default:
-        assert(false && "unreachable");
-        return "<invalid>";
     }
+    assert(false && "unreachable");
 }
 
 void slSetOutOfMemoryError(SlVM *vm) {
@@ -268,13 +245,18 @@ void slSetErrorVArg(SlVM *vm, const char *fmt, va_list args) {
     vm->error.occurred = true;
 }
 
-static inline void destroyObj(SlObj o) {
-    switch (o.type & 0xff) {
+static void delPtrRef(SlObjType type, SlGCObj *obj) {
+    slDelRef((SlObj){ .type = type, .as.gcObj = obj });
+}
+
+static void destroyObj(SlObj o) {
+    switch ((SlObjType)(o.type & 0xff)) {
     case SlObj_Null:
-    case SlObj_EmptySlot:
+    case SlObj_Empty:
     case SlObj_Bool:
     case SlObj_Int:
     case SlObj_Float:
+    case SlObj_StackIdx:
         break;
     case SlObj_Str:
         if (o.as.str->cap != 0) {
@@ -282,11 +264,24 @@ static inline void destroyObj(SlObj o) {
         }
         memFree(o.as.str);
         break;
-    case SlObj_Bytecode:
-        for (uint32_t i = 0; i < o.as.bytecode->constantCount; i++) {
-            slDelRef(o.as.bytecode->constants[i]);
+    case SlObj_Prototype:
+        o.as.gcObj->refCount = SIZE_MAX;
+        for (uint32_t i = 0; i < o.as.proto->constCount; i++) {
+            slDelRef(o.as.proto->constants[i]);
         }
-        memFree(o.as.bytecode);
+        if (o.as.proto->debugInfo != NULL) {
+            SlDebugInfo *debugInfo = o.as.proto->debugInfo;
+            memFree(debugInfo->lineInfo);
+            memFree(debugInfo->slotNames);
+            delPtrRef(SlObj_FrozenStr, &debugInfo->name->asGCObj);
+            delPtrRef(SlObj_FrozenStr, &debugInfo->path->asGCObj);
+            memFree(debugInfo);
+        }
+
+        memFree(o.as.proto->bytes);
+        memFree(o.as.proto->constants);
+        memFree(o.as.proto->sharedInfo);
+        memFree(o.as.proto);
         break;
     case SlObj_List:
         o.as.gcObj->refCount = SIZE_MAX;
@@ -309,19 +304,11 @@ static inline void destroyObj(SlObj o) {
         break;
     case SlObj_Func:
         o.as.gcObj->refCount = SIZE_MAX;
-        slDelRef((SlObj){
-            .type = SlObj_FrozenStr,
-            .as.str = o.as.func->name
-        });
-        slDelRef((SlObj){
-            .type = SlObj_Bytecode,
-            .as.bytecode = o.as.func->bytecode
-        });
-        for (uint16_t i = 0; i < o.as.func->sharedSlotCount; i++) {
-            slDelRef((SlObj){
-                .type = SlObj_SharedSlot,
-                .as.sharedSlot = o.as.func->sharedSlots[i]
-            });
+        for (uint16_t i = 0; i < o.as.func->proto->sharedCount; i++) {
+            delPtrRef(
+                SlObj_SharedSlot,
+                &o.as.func->sharedSlots[i]->asGCObj
+            );
         }
         memFree(o.as.func);
         break;
@@ -339,7 +326,10 @@ static inline void destroyObj(SlObj o) {
         slDelRef(o.as.sharedSlot->value);
         memFree(o.as.sharedSlot);
         break;
-    default:
-        assert(false && "unknown type");
+
+    case SlObj_FrozenStr:
+    case SlObj_FrozenList:
+    case SlObj_FrozenMap:
+        assert(false && "unreachable");
     }
 }

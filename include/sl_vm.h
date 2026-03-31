@@ -6,15 +6,18 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#define slMaxReg (0x7fff + 0x7f)
+
 #define slObjIsSmall(obj) ((obj).type <= SlObj_Float)
 #define slObjIsNumeric(obj)                                                    \
     ((obj).type == SlObj_Int || (obj).type == SlObj_Float)
 
 typedef enum SlObjType {
-    // Small objects (not tracked by gc)
+    // Small objects (not tracked by gc, stored inline)
 
     SlObj_Null,
-    SlObj_EmptySlot, // internal
+    SlObj_Empty, // internal (undefined value)
+    SlObj_StackIdx, // internal (an index on the stack)
     SlObj_Bool,
     SlObj_Int,
     SlObj_Float,
@@ -22,7 +25,7 @@ typedef enum SlObjType {
     // Acyclic objects (tracked by the gc but cannot contain themselves)
 
     SlObj_Str,
-    SlObj_Bytecode, // internal
+    SlObj_Prototype, // internal (function prototype)
 
     // Cyclic objects (objects that can contain themselves)
 
@@ -30,14 +33,13 @@ typedef enum SlObjType {
     SlObj_Map,
     SlObj_Func,
     SlObj_Struct,
-    SlObj_SharedSlot, // internal
+    SlObj_SharedSlot, // internal (value captured by closures)
 
     // Frozen types
 
-    SlObj_FrozenList = SlObj_List | 0x800, // tuple
+    SlObj_FrozenList = SlObj_List | 0x800, // a.k.a. tuple
     SlObj_FrozenStr  = SlObj_Str  | 0x800,
-    SlObj_FrozenMap  = SlObj_Map  | 0x800,
-    SlObj_FrozenFunc = SlObj_Func | 0x800  // function prototype
+    SlObj_FrozenMap  = SlObj_Map  | 0x800
 } SlObjType;
 
 typedef bool SlBool;
@@ -48,7 +50,7 @@ typedef struct SlStr SlStr;
 typedef struct SlMap SlMap;
 typedef struct SlFunc SlFunc;
 typedef struct SlStruct SlStruct;
-typedef struct SlBytecode SlBytecode;
+typedef struct SlPrototype SlPrototype;
 typedef struct SlSharedSlot SlSharedSlot;
 
 typedef struct SlGCObj {
@@ -67,8 +69,9 @@ typedef struct SlObj {
         SlMap *map;
         SlFunc *func;
         SlStruct *structure;
-        SlBytecode *bytecode;
+        SlPrototype *proto;
         SlSharedSlot *sharedSlot;
+        uint16_t stackIdx;
         SlGCObj *gcObj;
     } as;
 } SlObj;
@@ -97,10 +100,8 @@ struct SlMap {
 
 struct SlFunc {
     SlGCObj asGCObj;
-    SlStr *name;
-    SlBytecode *bytecode;
-    uint16_t sharedSlotCount;
-    SlSharedSlot *sharedSlots[0];
+    SlPrototype *proto;
+    SlSharedSlot *sharedSlots[];
 };
 
 typedef struct SlMethodTable {
@@ -123,20 +124,28 @@ typedef struct SlLineInfo {
 
 typedef struct SlDebugInfo {
     SlStr *path;
+    SlStr *name;
     SlLineInfo *lineInfo;
     size_t lineInfoCount;
     uint8_t **slotNames;
     uint16_t nameCount;
 } SlDebugInfo;
 
-struct SlBytecode {
+typedef struct SlSharedInfo {
+    bool fromShared;
+    uint16_t idx;
+} SlSharedInfo;
+
+struct SlPrototype {
     SlGCObj asGCObj;
     uint8_t *bytes;
     uint32_t size;
-    uint16_t frameSize;
-    uint32_t constantCount;
+    uint32_t constCount;
     SlObj *constants;
-    const SlDebugInfo *debugInfo;
+    SlDebugInfo *debugInfo;
+    uint16_t frameSize;
+    uint16_t sharedCount;
+    SlSharedInfo *sharedInfo;
 };
 
 struct SlSharedSlot {
@@ -153,7 +162,7 @@ typedef struct SlSource {
 typedef struct SlStackBlock {
     struct SlStackBlock *prev;
     uint16_t used, cap;
-    SlObj slots[1];
+    SlObj slots[];
 } SlStackBlock;
 
 typedef struct SlCallFrame {
@@ -185,7 +194,7 @@ typedef struct SlVM {
     SlStackBlock *stackTop;
     SlCallStack callStack;
     uint64_t pc;
-    SlBytecode *bytecode;
+    SlPrototype *bytecode;
     SlObj *stackPtr;
 } SlVM;
 
@@ -224,28 +233,20 @@ SlObj slFrozenStrNew(
 
 SlObj slFrozenStrFmt(SlVM *vm, const char *fmt, ...);
 
-// Create a new function object.
-// A reference is taken from name and bytecode.
+// Create a new function prototype object.
+// Ownership of bytes, constants, sharedInfo and debugInfo is transferred to
+// the new object.
 // If an error occurs return NULL.
-SlObj slFrozenFuncNew(
+SlObj slPrototypeNew(
     SlVM *vm,
-    SlObj name,
-    SlObj bytecode
-);
-
-// Create a new bytecode object.
-// All data in bytes and constants is copied, the new object takes a reference
-// from all objects in constants.
-// Ownership of debugInfo is transfered to the new object.
-// If an error occurs return NULL.
-SlObj slBytecodeNew(
-    SlVM *vm,
-    const uint8_t *bytes,
+    uint8_t *bytes,
     uint32_t size,
+    SlObj *constants,
+    uint32_t constCount,
+    SlSharedInfo *sharedInfo,
+    uint16_t sharedCount,
     uint16_t frameSize,
-    const SlObj *constants,
-    uint32_t constantCount,
-    const SlDebugInfo *debugInfo
+    SlDebugInfo *debugInfo
 );
 
 // Get a new reference to an object.

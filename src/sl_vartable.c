@@ -1,8 +1,9 @@
 #include "sl_vartable.h"
 
-SlVarTable *slNewVarTable(uint8_t *strs, SlVarTable *parent) {
+SlVarTable *slNewVarTable(SlVM *vm, uint8_t *strs, SlVarTable *parent) {
     SlVarTable *table = memAlloc(1, sizeof(*table));
     if (table == NULL) {
+        slSetOutOfMemoryError(vm);
         return table;
     }
     table->parent = parent;
@@ -17,8 +18,8 @@ SlVarTable *slDelVarTable(SlVarTable *table) {
     return parent;
 }
 
-bool slVarTableSet(SlVarTable *table, SlStrIdx name, uint32_t value) {
-    return slStrMapSet(&table->vars, name, value);
+bool slVarTableSet(SlVM *vm, SlVarTable *table, SlStrIdx name, uint32_t value) {
+    return slStrMapSet(vm, &table->vars, name, value);
 }
 
 uint32_t *slVarTableGet(SlVarTable *table, SlStrIdx name) {

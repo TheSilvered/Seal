@@ -2,6 +2,7 @@
 #define SL_VARTABLE_H_
 
 #include "sl_hashmap.h"
+#include "sl_vm.h"
 
 typedef struct SlVarTable {
     struct SlVarTable *parent;
@@ -9,11 +10,11 @@ typedef struct SlVarTable {
 } SlVarTable;
 
 // Create a new var table.
-SlVarTable *slNewVarTable(uint8_t *strs, SlVarTable *parent);
+SlVarTable *slNewVarTable(SlVM *vm, uint8_t *strs, SlVarTable *parent);
 // Destroy `table` and return its parent.
 SlVarTable *slDelVarTable(SlVarTable *table);
 
-bool slVarTableSet(SlVarTable *table, SlStrIdx name, uint32_t value);
+bool slVarTableSet(SlVM *vm, SlVarTable *table, SlStrIdx name, uint32_t value);
 uint32_t *slVarTableGet(SlVarTable *table, SlStrIdx name);
 
 #endif // !SL_VARTABLE_H_
