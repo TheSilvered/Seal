@@ -1,8 +1,7 @@
 #include "sl_hashmap.h"
-#include <string.h>
 
 uint32_t slMemHash(const void *data, size_t len) {
-    const uint8_t *bytes = (const uint8_t *)data;
+    const uint8_t *bytes = data;
 
     uint32_t hash = 2166136261u;
     for (size_t i = 0; i < len; i++) {

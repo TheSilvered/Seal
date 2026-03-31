@@ -37,7 +37,7 @@ static const struct {
 };
 static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
 
-static void setError(LexerState *l, const char *fmt, ...);
+static void setError(const LexerState *l, const char *fmt, ...);
 static bool appendToken(LexerState *l, SlToken token);
 static bool appendSimpleToken(LexerState *l, SlTokenKind kind);
 static uint32_t appendStr(LexerState *l, const uint8_t *str, uint32_t len);
@@ -89,6 +89,7 @@ const char *slTokenKindToStr(SlTokenKind kind) {
     case SlToken_Eof:
         return "the end of the file";
     }
+    assert(false && "unreachable");
 }
 
 SlTokens slTokenize(SlVM *vm, const SlSource *source) {
@@ -176,7 +177,7 @@ SlTokens slTokenize(SlVM *vm, const SlSource *source) {
     };
 }
 
-static void setError(LexerState *l, const char *fmt, ...) {
+static void setError(const LexerState *l, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     char buf[64];
@@ -222,7 +223,6 @@ outerContinue:;
 
 static bool appendNumber(LexerState *l) {
     int64_t n = 0;
-    uint32_t pos = l->pos;
     while (l->pos < l->len && isdigit(l->text[l->pos])) {
         n = n*10 + (l->text[l->pos] - '0');
         l->pos++;

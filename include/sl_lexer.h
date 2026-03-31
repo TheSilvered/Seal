@@ -2,7 +2,6 @@
 #define SL_LEXER_H_
 
 #include <stdint.h>
-#include <stddef.h>
 
 #include "sl_array.h"
 #include "sl_vm.h"

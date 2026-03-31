@@ -19,8 +19,7 @@ add_library(seal
     src/sl_hashmap.c
     src/sl_lexer.c
     src/sl_parser.c
-    src/sl_vartable.c
-    src/sl_vm.c
+        src/sl_vm.c
 )
 target_compile_definitions(seal PRIVATE CLIB_MEM_TRACE_ALLOCS _CRT_SECURE_NO_WARNINGS)
 

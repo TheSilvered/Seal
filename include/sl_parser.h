@@ -68,7 +68,7 @@ typedef struct SlAst {
     SlNodeIdx root;
 } SlAst;
 
-SlAst slParse(SlVM *vm, SlSource *source);
+SlAst slParse(SlVM *vm, const SlSource *source);
 void slDestroyAst(SlAst *ast);
 void slPrintAst(const SlAst *ast);
 

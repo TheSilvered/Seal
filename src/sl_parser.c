@@ -51,13 +51,18 @@ typedef struct ParserState {
     VarTable *vt; // used when resolving variable names
 } ParserState;
 
-static void setError(ParserState *p, const char *fmt, ...);
-static void setErrorWLine(ParserState *p, uint32_t line, const char *fmt, ...);
+static void setError(const ParserState *p, const char *fmt, ...);
+static void setErrorWLine(
+    const ParserState *p,
+    uint32_t line,
+    const char *fmt,
+    ...
+);
 
 static SlNodeIdx addNode(ParserState *p, SlNode node);
-static SlToken token(ParserState *p);
+static SlToken token(const ParserState *p);
 static SlToken next(ParserState *p);
-static bool expect(ParserState *p, SlTokenKind kind);
+static bool expect(const ParserState *p, SlTokenKind kind);
 static bool expectNext(ParserState *p, SlTokenKind kind);
 
 static bool ensureVars(ParserState *p);
@@ -125,7 +130,7 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
     }
 }
 
-static void printStrs(const SlAst *ast, SlStrIdx *strs, uint32_t count) {
+static void printStrs(const SlAst *ast, const SlStrIdx *strs, uint32_t count) {
     for (uint32_t i = 0; i < count; i++) {
         SlStrIdx str = strs[i];
         printf("%.*s", (int)str.len, (char *)&ast->strs[str.idx]);
@@ -135,6 +140,7 @@ static void printStrs(const SlAst *ast, SlStrIdx *strs, uint32_t count) {
     }
 }
 
+//noinspection UnreachableCode
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
     printf(
         "%*sblock [shared=%"PRIu16", funcs=%"PRIu16"]\n",
@@ -236,7 +242,7 @@ static void destroyNode(SlNode node) {
     }
 }
 
-static void destroyNodes(SlNode *nodes, uint32_t nodeCount) {
+static void destroyNodes(const SlNode *nodes, uint32_t nodeCount) {
     for (uint32_t i = 0; i < nodeCount; i++) {
         destroyNode(nodes[i]);
     }
@@ -246,9 +252,13 @@ void slDestroyAst(SlAst *ast) {
     destroyNodes(ast->nodes, ast->nodeCount);
     memFree(ast->nodes);
     memFree(ast->strs);
+    ast->nodes = NULL;
+    ast->nodeCount = 0;
+    ast->root = -1;
+    ast->strs = NULL;
 }
 
-SlAst slParse(SlVM *vm, SlSource *source) {
+SlAst slParse(SlVM *vm, const SlSource *source) {
     ParserState p = {
         .vm = vm,
         .path = source->path,
@@ -292,7 +302,7 @@ SlAst slParse(SlVM *vm, SlSource *source) {
     return ast;
 }
 
-static void setError(ParserState *p, const char *fmt, ...) {
+static void setError(const ParserState *p, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     char buf[64];
@@ -303,7 +313,11 @@ static void setError(ParserState *p, const char *fmt, ...) {
     slSetError(p->vm, "%s:%"PRIu32": %s", p->path, line, buf);
 }
 
-static void setErrorWLine(ParserState *p, uint32_t line, const char *fmt, ...) {
+static void setErrorWLine(
+    const ParserState *p,
+    uint32_t line,
+    const char *fmt, ...
+) {
     va_list args;
     va_start(args, fmt);
     char buf[64];
@@ -321,7 +335,7 @@ SlNodeIdx addNode(ParserState *p, SlNode node) {
     return (SlNodeIdx)p->nodes.len - 1;
 }
 
-SlToken token(ParserState *p) {
+SlToken token(const ParserState *p) {
     assert(p->idx < p->tokens.tokenCount);
     return p->tokens.tokens[p->idx];
 }
@@ -331,7 +345,7 @@ SlToken next(ParserState *p) {
     return p->tokens.tokens[p->idx++];
 }
 
-bool expect(ParserState *p, SlTokenKind kind) {
+bool expect(const ParserState *p, SlTokenKind kind) {
     if (token(p).kind != kind) {
         setError(
             p,
@@ -740,7 +754,7 @@ static bool addVar(ParserState *p, SlStrIdx name) {
     return slStrMapSet(p->vm, p->vars, name, p->vars->len);
 }
 
-static bool refVar(ParserState *p, SlStrIdx name) {
+static bool refVar(const ParserState *p, SlStrIdx name) {
     assert(p->vt != NULL);
     uint32_t funcLevel = p->vt->funcLevel;
     VarTable *vt = p->vt;
