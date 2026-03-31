@@ -6,8 +6,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define slMaxReg (0x7fff + 0x7f)
-
 #define slObjIsSmall(obj) ((obj).type <= SlObj_Float)
 #define slObjIsNumeric(obj)                                                    \
     ((obj).type == SlObj_Int || (obj).type == SlObj_Float)

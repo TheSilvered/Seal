@@ -137,13 +137,14 @@ static void printStrs(const SlAst *ast, SlStrIdx *strs, uint32_t count) {
 
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
     printf(
-        "%*sblock [%"PRIu32"]\n",
+        "%*sblock [shared=%"PRIu16", funcs=%"PRIu16"]\n",
         indent * INDENT_WIDTH, "",
-        node.as.block.sharedCount
+        node.as.block.sharedCount,
+        node.as.block.funcCount
     );
     slMapForeach(node.as.block.vars, SlStrMapBucket, var) {
         printf(
-            "%*s- "S_Fmt" @ %"PRIu32" * %"PRIi32"\n",
+            "%*s- "S_Fmt" @ reg=%"PRIu32", shr=%"PRIi32"\n",
             indent * INDENT_WIDTH, "",
             S_Arg(var->key, ast->strs),
             var->value & 0xff, (int32_t)(var->value >> 16) - 1
@@ -401,7 +402,6 @@ SlNodeIdx parseFile(ParserState *p) {
     });
 }
 
-
 SlNodeIdx parseStatement(ParserState *p) {
     switch (token(p).kind) {
     case SlToken_KwVar:
@@ -487,8 +487,6 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
 
     SlStrMap *prevVars = p->vars;
     p->vars = NULL;
-    if (params.len > 0 && !ensureVars(p))
-        goto error;
 
     for (uint32_t i = 0; i < params.len; i++) {
         if (!addVar(p, params.data[i])) goto error;
@@ -789,11 +787,14 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
         return true;
     case SlNode_Print:
         return resolveVars(p, node->as.print);
-    case SlNode_Lambda:
+    case SlNode_Lambda: {
         p->funcLevel++;
         if (!resolveVars(p, node->as.lambda.body)) return false;
+        SlNode *body = nodesAt(&p->nodes, node->as.lambda.body);
+        body->as.block.funcCount -= node->as.lambda.paramCount;
         p->funcLevel--;
         return true;
+    }
     case SlNode_RetStmnt:
         return node->as.retStmnt == -1
             ? true
@@ -809,6 +810,9 @@ static bool resolveBlockVars(ParserState *p, SlNode *node) {
         return false;
     }
     node->as.block.vars = p->vt->vars;
+    // currently args + funcs, when resolving the corresponding lambda the args
+    // are removed
+    node->as.block.funcCount = p->vt->vars->len;
 
     for (uint32_t i = 0; i < node->as.block.nodeCount; i++) {
         if (!resolveVars(p, node->as.block.nodes[i])) return false;
