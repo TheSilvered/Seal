@@ -1,7 +1,6 @@
 #include "sl_array.h"
 #include "sl_parser.h"
 #include "sl_lexer.h"
-#include "sl_vartable.h"
 
 #include <stdbool.h>
 #include <assert.h>
@@ -65,10 +64,7 @@ static SlToken next(ParserState *p);
 static bool expect(const ParserState *p, SlTokenKind kind);
 static bool expectNext(ParserState *p, SlTokenKind kind);
 
-static bool ensureVars(ParserState *p);
-static bool pushVT(ParserState *p, SlStrMap *vars);
-static void popVT(ParserState *p);
-static bool addVar(ParserState *p, SlStrIdx name);
+static bool addVar(const ParserState *p, SlStrIdx name);
 
 static SlNodeIdx parseFile(ParserState *p);
 static SlNodeIdx parseStatement(ParserState *p);
@@ -366,19 +362,15 @@ static bool expectNext(ParserState *p, SlTokenKind kind) {
     return true;
 }
 
-static bool ensureVars(ParserState *p) {
-    if (p->vars) return true;
+SlNodeIdx parseFile(ParserState *p) {
+    SlI32Arr nodes = { 0 };
     p->vars = memAllocZeroed(1, sizeof(*p->vars));
     if (p->vars == NULL) {
         slSetOutOfMemoryError(p->vm);
-        return false;
+        return -1;
     }
     p->vars->userData = p->tokens.strs;
-    return true;
-}
 
-SlNodeIdx parseFile(ParserState *p) {
-    SlI32Arr nodes = { 0 };
     while (token(p).kind != SlToken_Eof) {
         SlNodeIdx idx = parseStatement(p);
         if (idx == -1) {
@@ -500,7 +492,12 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
     if (!parseFuncParams(p, &params)) return -1;
 
     SlStrMap *prevVars = p->vars;
-    p->vars = NULL;
+    p->vars = memAllocZeroed(1, sizeof(*p->vars));
+    if (p->vars == NULL) {
+        slSetOutOfMemoryError(p->vm);
+        goto error;
+    }
+    p->vars->userData = p->tokens.strs;
 
     for (uint32_t i = 0; i < params.len; i++) {
         if (!addVar(p, params.data[i])) goto error;
@@ -542,7 +539,12 @@ static SlNodeIdx parseBlock(ParserState *p, bool keepVars) {
     SlI32Arr nodes = { 0 };
     SlStrMap *prevVars = p->vars;
     if (!keepVars) {
-        p->vars = NULL;
+        p->vars = memAllocZeroed(1, sizeof(*p->vars));
+        if (p->vars == NULL) {
+            slSetOutOfMemoryError(p->vm);
+            goto error;
+        }
+        p->vars->userData = p->tokens.strs;
     }
     while (token(p).kind != SlToken_RightCurly) {
         SlNodeIdx stmnt = parseStatement(p);
@@ -711,45 +713,7 @@ static SlNodeIdx parseValue(ParserState *p) {
     }
 }
 
-static bool pushVT(
-    ParserState *p,
-    SlStrMap *vars
-) {
-    VarTable *vt = memAlloc(1, sizeof(*vt));
-    if (vt == NULL) {
-        slSetOutOfMemoryError(p->vm);
-        return false;
-    }
-
-    if (vars == NULL) {
-        vars = memAllocZeroed(1, sizeof(*vars));
-        if (vars == NULL) {
-            slSetOutOfMemoryError(p->vm);
-            memFree(vt);
-            return false;
-        }
-        vars->userData = p->tokens.strs;
-    }
-
-    vt->parent = p->vt;
-    vt->funcLevel = p->funcLevel;
-    vt->vars = vars;
-    vt->sharedCount = 0;
-
-    p->vt = vt;
-    p->vars = p->vt->vars;
-    return true;
-}
-
-static void popVT(ParserState *p) {
-    VarTable *vt = p->vt;
-    p->vt = p->vt->parent;
-    p->vars = p->vt ? p->vt->vars : NULL;
-    memFree(vt);
-}
-
-static bool addVar(ParserState *p, SlStrIdx name) {
-    if (!ensureVars(p)) return false;
+static bool addVar(const ParserState *p, SlStrIdx name) {
     if (slStrMapGet(p->vars, name) != NULL) return true;
     return slStrMapSet(p->vm, p->vars, name, p->vars->len);
 }
@@ -820,18 +784,38 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
 }
 
 static bool resolveBlockVars(ParserState *p, SlNode *node) {
-    if (!pushVT(p, node->as.block.vars)) {
-        return false;
+    SlStrMap *vars = node->as.block.vars;
+    if (vars == NULL) {
+        vars = memAllocZeroed(1, sizeof(*vars));
+        if (vars == NULL) {
+            slSetOutOfMemoryError(p->vm);
+            return false;
+        }
+        vars->userData = p->tokens.strs;
     }
-    node->as.block.vars = p->vt->vars;
+    VarTable vt = {
+        .parent = p->vt,
+        .funcLevel = p->funcLevel,
+        .vars = vars,
+        .sharedCount = 0
+    };
+
+    // ReSharper disable once CppDFALocalValueEscapesFunction
+    p->vt = &vt; // never used outside nested calls of this function
+    p->vars = vars;
+    node->as.block.vars = vars;
+
     // currently args + funcs, when resolving the corresponding lambda the args
     // are removed
-    node->as.block.funcCount = p->vt->vars->len;
+    node->as.block.funcCount = vars->len;
 
     for (uint32_t i = 0; i < node->as.block.nodeCount; i++) {
         if (!resolveVars(p, node->as.block.nodes[i])) return false;
     }
     node->as.block.sharedCount = p->vt->sharedCount;
-    popVT(p);
+
+    p->vt = vt.parent;
+    p->vars = vt.parent ? vt.parent->vars : NULL;
+
     return true;
 }
