@@ -120,13 +120,18 @@ typedef struct SlLineInfo {
     uint32_t line;
 } SlLineInfo;
 
+typedef struct SlSlotInfo {
+    uint8_t *name;
+    uint16_t slotIdx;
+} SlSlotInfo;
+
 typedef struct SlDebugInfo {
-    SlStr *path;
-    SlStr *name;
+    uint8_t *path;
+    uint8_t *name;
     SlLineInfo *lineInfo;
-    size_t lineInfoCount;
-    uint8_t **slotNames;
-    uint16_t nameCount;
+    SlSlotInfo *slotInfo;
+    uint32_t lineInfoCount;
+    uint16_t slotInfoCount;
 } SlDebugInfo;
 
 typedef struct SlSharedInfo {

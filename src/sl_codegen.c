@@ -3,37 +3,23 @@
 #include "sl_array.h"
 #include "sl_codegen.h"
 
-#define _maxRegs ((1 << 15) + 0x80 - 1)
-#define _strFmt(str) (int)(str).len, (char *)(g->ast.strs + (str).idx)
-
-/*
-- I know which variables will be captured by subroutines
-    call: create shared slots for all of them, recreate them if the variable is redefined
-    exit: copy all stack values and remove the references
-    ! may lead to unnecessary allocations if a value is only conditionally captured
-*/
+#define _maxReg (0x7fff + 0x80)
+#define S_Fmt "%.*s"
+#define S_Arg(str) (int)(str).len, (char *)(g->ast.strs + (str).idx)
 
 slArrayType(SlObj, Constants, consts)
 slArrayImpl(SlObj, Constants, consts)
 
-typedef struct VarReg {
-    SlStrIdx name;
-    uint16_t reg;
-} VarReg;
+typedef struct FuncState {
+    struct FuncState *parent;
+    SlU8Arr bytecode;
+    Constants consts;
+    SlStrMap externalVars;
 
-slArrayType(VarReg, Variables, vars)
-slArrayImpl(VarReg, Variables, vars)
-
-typedef struct VarTable {
-    struct VarTable *parent;
-    Variables vars;
-} VarTable;
+} FuncState;
 
 typedef struct GenState {
     SlVM *vm;
-    u8Arr bytecode;
-    Constants consts;
-    VarTable *varsTop;
     SlAst ast;
     int32_t outReg;
     uint16_t usedStack;
@@ -45,7 +31,7 @@ static uint16_t getFreeReg(GenState *g);
 static bool pushOp(GenState *g, SlOpCode opCode);
 static bool pushByte(GenState *g, uint8_t byte);
 static bool pushReg(GenState *g, int32_t reg);
-static bool pushU32(GenState *g, uint32_t reg);
+static bool pushU32(GenState *g, uint32_t n);
 
 static bool pushVarTable(GenState *g);
 static void popVarTable(GenState *g);
@@ -98,8 +84,11 @@ static void printInst(
         case 'r':
             printReg(g, i);
             break;
+        case 'B':
+            printf("%"PRId8, g->bytecode.data[++*i]);
+            break;
         case 'b':
-            printf("%"PRIx8, g->bytecode.data[++*i]);
+            printf("%"PRIu8, g->bytecode.data[++*i]);
             break;
         case 'i':
             printU32(g, i);
@@ -112,51 +101,84 @@ static void printInst(
 }
 
 static void printBytecode(GenState *g) {
-    u8Arr bytecode = g->bytecode;
+    SlU8Arr bytecode = g->bytecode;
     for (uint32_t i = 0; i < bytecode.len; i++) {
-        switch (bytecode.data[i]) {
+        switch ((SlOpCode)bytecode.data[i]) {
         case SlOp_nop:
             printInst(g, &i, "nop", "");
-            break;
-        case SlOp_ldnull:
-            printInst(g, &i, "ldnull", "r");
-            break;
+            continue;
+        case SlOp_ldn:
+            printInst(g, &i, "ldn", "r");
+            continue;
+        case SlOp_ldns:
+            printInst(g, &i, "ldns", "rr");
+            continue;
         case SlOp_ldi8:
-            printInst(g, &i, "ldi8", "rb");
-            break;
-        case SlOp_ldk:
-            printInst(g, &i, "ld", "ri");
-            break;
+            printInst(g, &i, "ldi8", "rB");
+            continue;
+        case SlOp_ldkb:
+            printInst(g, &i, "ldkb", "rb");
+            continue;
+        case SlOp_ldki:
+            printInst(g, &i, "ldki", "ri");
+            continue;
         case SlOp_cpy:
             printInst(g, &i, "cpy", "rr");
-            break;
+            continue;
+        case SlOp_lds:
+            printInst(g, &i, "lds", "rr");
+            continue;
+        case SlOp_sts:
+            printInst(g, &i, "sts", "rr");
+            continue;
+        case SlOp_mks:
+            printInst(g, &i, "mks", "rr");
+            continue;
+        case SlOp_dts:
+            printInst(g, &i, "dts", "rr");
+            continue;
         case SlOp_add:
             printInst(g, &i, "add", "rrr");
-            break;
+            continue;
         case SlOp_sub:
             printInst(g, &i, "sub", "rrr");
-            break;
+            continue;
         case SlOp_mul:
             printInst(g, &i, "mul", "rrr");
-            break;
+            continue;
         case SlOp_div:
             printInst(g, &i, "div", "rrr");
-            break;
+            continue;
         case SlOp_mod:
             printInst(g, &i, "mod", "rrr");
-            break;
+            continue;
         case SlOp_pow:
             printInst(g, &i, "pow", "rrr");
-            break;
+            continue;
         case SlOp_print:
             printInst(g, &i, "print", "r");
-            break;
+            continue;
+        case SlOp_mkf:
+            printInst(g, &i, "mkf", "ri");
+            continue;
+        case SlOp_call:
+            printInst(g, &i, "call", "rr");
+            continue;
         case SlOp_ret:
             printInst(g, &i, "ret", "r");
-            break;
-        default:
-            assert(false && "unknown op");
+            continue;
+        case SlOp_jmp:
+            printInst(g, &i, "jmp", "I");
+            continue;
+        case SlOp_jtr:
+            printInst(g, &i, "jtr", "rI");
+            continue;
+        case SlOp_jfl:
+            printInst(g, &i, "jfl", "rI");
+            continue;
         }
+        printf("ERROR: bad byte at %"PRIu32"\n", i);
+        i++;
     }
 }
 

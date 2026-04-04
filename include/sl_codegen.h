@@ -4,7 +4,7 @@
 #include "sl_parser.h"
 #include "sl_vm.h"
 
-// Comma separated argument list:
+// Argument list:
 // name.format
 // Possible formats are:
 // - r: register-like (1-byte for 0 to 127, two bytes above)
@@ -19,9 +19,9 @@ typedef enum SlOpCode {
     SlOp_nop, // no operation
 
     SlOp_ldn, // dst.r; load null: stack[dst] = null
+    SlOp_ldns, // from.r to.r; load nulls: for i in from..=to { stack[i] = null; }
     SlOp_ldi8,// dst.r val.B; load int8_t: stack[dst] = int(val)
     SlOp_ldkb,// dst.r src.b; load constant byte:  stack[dst] = constants[src]
-    SlOp_ldks,// dst.r src.s; load constant short: stack[dst] = constants[src]
     SlOp_ldki,// dst.r src.i; load constant int:   stack[dst] = constants[src]
     SlOp_cpy, // dst.r src.r; copy: stack[dst] = stack[src]
     SlOp_lds, // dst.r src.r; load shared: stack[dst] = shared[src].value
