@@ -1,7 +1,6 @@
 #ifndef SL_VM_H_
 #define SL_VM_H_
 
-#include <stdarg.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -125,6 +124,8 @@ typedef struct SlSlotInfo {
     uint16_t slotIdx;
 } SlSlotInfo;
 
+// `path` and `name` are allocated after the SlDebugInfo struct and end with NUL,
+// `lineInfo` and `slotInfo` are allocated separately.
 typedef struct SlDebugInfo {
     uint8_t *path;
     uint8_t *name;

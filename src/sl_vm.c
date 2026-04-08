@@ -272,9 +272,7 @@ static void destroyObj(SlObj o) {
         if (o.as.proto->debugInfo != NULL) {
             SlDebugInfo *debugInfo = o.as.proto->debugInfo;
             memFree(debugInfo->lineInfo);
-            memFree(debugInfo->slotNames);
-            delPtrRef(SlObj_FrozenStr, &debugInfo->name->asGCObj);
-            delPtrRef(SlObj_FrozenStr, &debugInfo->path->asGCObj);
+            memFree(debugInfo->slotInfo);
             memFree(debugInfo);
         }
 
