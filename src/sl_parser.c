@@ -59,6 +59,12 @@ static void setErrorWLine(
 );
 
 static SlNodeIdx addNode(ParserState *p, SlNode node);
+SlNodeIdx addLambda(
+    ParserState *p,
+    uint32_t line,
+    SlStrMap *params,
+    SlNodeIdx innerBody
+);
 static SlToken token(const ParserState *p);
 static SlToken next(ParserState *p);
 static bool expect(const ParserState *p, SlTokenKind kind);
@@ -71,7 +77,7 @@ static SlNodeIdx parseStatement(ParserState *p);
 static SlNodeIdx parseVarDeclr(ParserState *p);
 static SlNodeIdx parseFuncDeclr(ParserState *p);
 static SlNodeIdx parsePrint(ParserState *p);
-static SlNodeIdx parseBlock(ParserState *p, bool keepVars);
+static SlNodeIdx parseBlock(ParserState *p);
 static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
 static SlNodeIdx parseValue(ParserState *p);
@@ -126,17 +132,16 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
     }
 }
 
-static void printStrs(const SlAst *ast, const SlStrIdx *strs, uint32_t count) {
-    for (uint32_t i = 0; i < count; i++) {
-        SlStrIdx str = strs[i];
-        printf("%.*s", (int)str.len, (char *)&ast->strs[str.idx]);
-        if (i + 1 < count) {
-            printf(", ");
-        }
-    }
-}
+// static void printStrs(const SlAst *ast, const SlStrIdx *strs, uint32_t count) {
+//     for (uint32_t i = 0; i < count; i++) {
+//         SlStrIdx str = strs[i];
+//         printf("%.*s", (int)str.len, (char *)&ast->strs[str.idx]);
+//         if (i + 1 < count) {
+//             printf(", ");
+//         }
+//     }
+// }
 
-//noinspection UnreachableCode
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
     printf(
         "%*sblock [shared=%"PRIu16", funcs=%"PRIu16"]\n",
@@ -216,9 +221,7 @@ static void printRetStmnt(SlNode node, const SlAst *ast, uint32_t indent) {
 }
 
 static void printLambda(SlNode node, const SlAst *ast, uint32_t indent) {
-    printf("%*slambda |", indent * INDENT_WIDTH, "");
-    printStrs(ast, node.as.lambda.params, node.as.lambda.paramCount);
-    printf("|\n");
+    printf("%*slambda\n", indent * INDENT_WIDTH, "");
     printNode(node.as.lambda.body, ast, indent + 1);
 }
 
@@ -228,9 +231,6 @@ static void destroyNode(SlNode node) {
         memFree(&node.as.block.nodes);
         slStrMapClear(node.as.block.vars);
         memFree(node.as.block.vars);
-        break;
-    case SlNode_Lambda:
-        memFree(&node.as.lambda.params);
         break;
     default:
         // Nothing to free
@@ -331,6 +331,50 @@ SlNodeIdx addNode(ParserState *p, SlNode node) {
     return (SlNodeIdx)p->nodes.len - 1;
 }
 
+SlNodeIdx addLambda(
+    ParserState *p,
+    uint32_t line,
+    SlStrMap *params,
+    SlNodeIdx innerBody
+) {
+    SlNodeIdx outerBody = innerBody;
+    if (params != NULL && params->len != 0) {
+        SlNodeIdx *outerBodyNodes = memAlloc(1, sizeof(*outerBodyNodes));
+        if (outerBodyNodes == NULL) {
+            slSetOutOfMemoryError(p->vm);
+            goto error;
+        }
+        *outerBodyNodes = innerBody;
+
+        outerBody = addNode(p, (SlNode){
+            .kind = SlNode_Block,
+            .line = line,
+            .as.block = {
+                .nodes = outerBodyNodes,
+                .nodeCount = 1,
+                .vars = params,
+                .sharedCount = 0,
+                .funcCount = 0
+            }
+        });
+        if (outerBody == -1) goto error;
+    }
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_Lambda,
+        .line = line,
+        .as.lambda = {
+            .paramCount = params ? params->len : 0,
+            .body = outerBody
+        }
+    });
+
+error:
+    slStrMapClear(params);
+    memFree(params);
+    return -1;
+}
+
 SlToken token(const ParserState *p) {
     assert(p->idx < p->tokens.tokenCount);
     return p->tokens.tokens[p->idx];
@@ -398,14 +442,7 @@ SlNodeIdx parseFile(ParserState *p) {
         return -1;
     }
 
-    return addNode(p, (SlNode){
-        .kind = SlNode_Lambda,
-        .line = 0,
-        .as.lambda = {
-            .paramCount = 0,
-            .body = body
-        }
-    });
+    return addLambda(p, 0, NULL, body);
 }
 
 SlNodeIdx parseStatement(ParserState *p) {
@@ -417,7 +454,7 @@ SlNodeIdx parseStatement(ParserState *p) {
     case SlToken_KwFunc:
         return parseFuncDeclr(p);
     case SlToken_LeftCurly:
-        return parseBlock(p, false);
+        return parseBlock(p);
     default:
         setError(
             p,
@@ -448,14 +485,21 @@ SlNodeIdx parseVarDeclr(ParserState *p) {
     });
 }
 
-static bool parseFuncParams(ParserState *p, SlStrArr *params) {
+static SlStrMap *parseFuncParams(ParserState *p) {
+    SlStrMap *params = memAllocZeroed(1, sizeof(*params));
+    if (params == NULL) {
+        slSetOutOfMemoryError(p->vm);
+        return NULL;
+    }
+    params->userData = p->tokens.strs;
+
     if (!expectNext(p, SlToken_LeftParen)) goto error;
 
     while (token(p).kind != SlToken_RightParen) {
         if (!expect(p, SlToken_Ident)) goto error;
         SlStrIdx param = token(p).as.ident;
 
-        if (!slStrPush(p->vm, params, param)) goto error;
+        if (!slStrMapSet(p->vm, params, param, params->len)) goto error;
 
         next(p);
         if (
@@ -467,6 +511,7 @@ static bool parseFuncParams(ParserState *p, SlStrArr *params) {
                 "expected ',' or ')' but found %s instead",
                 slTokenKindToStr(token(p).kind)
             );
+            goto error;
         }
 
         if (token(p).kind == SlToken_Comma) {
@@ -474,9 +519,10 @@ static bool parseFuncParams(ParserState *p, SlStrArr *params) {
         }
     }
     next(p);
-    return true;
+    return params;
 error:
-    slStrClear(params);
+    slStrMapClear(params);
+    memFree(params);
     return false;
 }
 
@@ -488,9 +534,34 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
 
     if (!addVar(p, name)) return -1;
 
-    SlStrArr params = { 0 };
-    if (!parseFuncParams(p, &params)) return -1;
+    SlStrMap *params = parseFuncParams(p);
+    if (params == NULL) {
+        return false;
+    }
 
+    SlNodeIdx body = parseBlock(p);
+    if (body == -1) goto error;
+
+    SlNodeIdx lambda = addLambda(p, line, params, body);
+    if (lambda == -1) return -1;
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_VarDeclr,
+        .line = line,
+        .as.varDeclr = {
+            .name = name,
+            .value = lambda
+        }
+    });
+error:
+    slStrMapClear(params);
+    memFree(params);
+    return -1;
+}
+
+static SlNodeIdx parseBlock(ParserState *p) {
+    uint32_t line = next(p).line;
+    SlI32Arr nodes = { 0 };
     SlStrMap *prevVars = p->vars;
     p->vars = memAllocZeroed(1, sizeof(*p->vars));
     if (p->vars == NULL) {
@@ -498,54 +569,6 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
         goto error;
     }
     p->vars->userData = p->tokens.strs;
-
-    for (uint32_t i = 0; i < params.len; i++) {
-        if (!addVar(p, params.data[i])) goto error;
-    }
-
-    SlNodeIdx body = parseBlock(p, true);
-    if (body == -1) goto error;
-    p->vars = prevVars;
-    prevVars = NULL;
-
-    SlNodeIdx value = addNode(p, (SlNode){
-        .kind = SlNode_Lambda,
-        .line = line,
-        .as.lambda = {
-            .params = params.data,
-            .paramCount = params.len,
-            .body = body
-        }
-    });
-    if (value == -1) return -1;
-
-    return addNode(p, (SlNode){
-        .kind = SlNode_VarDeclr,
-        .line = line,
-        .as.varDeclr = {
-            .name = name,
-            .value = value
-        }
-    });
-error:
-    slStrClear(&params);
-    slStrMapClear(prevVars);
-    memFree(prevVars);
-    return -1;
-}
-
-static SlNodeIdx parseBlock(ParserState *p, bool keepVars) {
-    uint32_t line = next(p).line;
-    SlI32Arr nodes = { 0 };
-    SlStrMap *prevVars = p->vars;
-    if (!keepVars) {
-        p->vars = memAllocZeroed(1, sizeof(*p->vars));
-        if (p->vars == NULL) {
-            slSetOutOfMemoryError(p->vm);
-            goto error;
-        }
-        p->vars->userData = p->tokens.strs;
-    }
     while (token(p).kind != SlToken_RightCurly) {
         SlNodeIdx stmnt = parseStatement(p);
         if (stmnt == -1) goto error;
@@ -553,7 +576,7 @@ static SlNodeIdx parseBlock(ParserState *p, bool keepVars) {
     }
     next(p);
     SlStrMap *vars = p->vars;
-    p->vars = vars;
+    p->vars = prevVars;
 
     return addNode(p, (SlNode){
         .kind = SlNode_Block,
@@ -566,10 +589,8 @@ static SlNodeIdx parseBlock(ParserState *p, bool keepVars) {
     });
 error:
     slI32Clear(&nodes);
-    if (!keepVars) {
-        slStrMapClear(prevVars);
-        memFree(prevVars);
-    }
+    slStrMapClear(prevVars);
+    memFree(prevVars);
     return -1;
 }
 
@@ -792,6 +813,7 @@ static bool resolveBlockVars(ParserState *p, SlNode *node) {
             return false;
         }
         vars->userData = p->tokens.strs;
+        node->as.block.vars = vars;
     }
     VarTable vt = {
         .parent = p->vt,
@@ -803,10 +825,7 @@ static bool resolveBlockVars(ParserState *p, SlNode *node) {
     // ReSharper disable once CppDFALocalValueEscapesFunction
     p->vt = &vt; // never used outside nested calls of this function
     p->vars = vars;
-    node->as.block.vars = vars;
 
-    // currently args + funcs, when resolving the corresponding lambda the args
-    // are removed
     node->as.block.funcCount = vars->len;
 
     for (uint32_t i = 0; i < node->as.block.nodeCount; i++) {

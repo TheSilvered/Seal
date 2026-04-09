@@ -50,8 +50,11 @@ typedef struct SlNode {
             SlNodeIdx lhs, rhs;
             SlBinOp op;
         } binOp;
+        // if there are any parameters, `body` references a block node which
+        // binds the parameters and contains exactly one node that is the body
+        // of the function
+        // if there are no parameters `body` is the actual body
         struct {
-            SlStrIdx *params;
             uint16_t paramCount;
             SlNodeIdx body;
         } lambda;
