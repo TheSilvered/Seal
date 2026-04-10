@@ -1,10 +1,7 @@
-var a = 10;
+var a = 1;
+var b = 2;
+var c = 3;
 
-print a;
-
-func f(b, c) {
-    print a;
-    func g() {
-        print c;
-    }
+func f(hello) {
+    print hello;
 }

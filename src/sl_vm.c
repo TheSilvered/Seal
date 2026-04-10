@@ -55,7 +55,7 @@ SlSource *slSourceFromFile(SlVM *vm, const char *path) {
     ret->text = (uint8_t *)(ret + 1);
     ret->path = path;
     size_t textLen = fread(ret->text, 1, fileSize, f);
-    if (textLen < fileSize && ferror(f) != 0 && !feof(f)) {
+    if (textLen < (size_t)fileSize && ferror(f) != 0 && !feof(f)) {
         int error = ferror(f);
         slSetError(
             vm,

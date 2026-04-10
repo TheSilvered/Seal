@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 #define slObjIsSmall(obj) ((obj).type <= SlObj_Float)
 #define slObjIsNumeric(obj)                                                    \

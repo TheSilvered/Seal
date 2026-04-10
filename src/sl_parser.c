@@ -149,7 +149,7 @@ static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
         node.as.block.sharedCount,
         node.as.block.funcCount
     );
-    slMapForeach(node.as.block.vars, SlStrMapBucket, var) {
+    slMapForeach(node.as.block.vars, SlStrMapBucket, var, i) {
         printf(
             "%*s- "S_Fmt" @ reg=%"PRIu32", shr=%"PRIi32"\n",
             indent * INDENT_WIDTH, "",
@@ -228,7 +228,7 @@ static void printLambda(SlNode node, const SlAst *ast, uint32_t indent) {
 static void destroyNode(SlNode node) {
     switch (node.kind) {
     case SlNode_Block:
-        memFree(&node.as.block.nodes);
+        memFree(node.as.block.nodes);
         slStrMapClear(node.as.block.vars);
         memFree(node.as.block.vars);
         break;
@@ -778,7 +778,7 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
             setErrorWLine(
                 p,
                 node->line,
-                "unknown variable %"S_Fmt,
+                "unknown variable '"S_Fmt"'",
                 S_Arg(node->as.access, p->tokens.strs)
             );
             return false;

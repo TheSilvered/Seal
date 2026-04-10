@@ -14,12 +14,14 @@
         KeyType key;                                                           \
         ValueType value;                                                       \
         uint32_t hash;                                                         \
+        uint32_t next;                                                         \
     } Name##Bucket;                                                            \
     typedef struct Name {                                                      \
         Name##Bucket *buckets;                                                 \
         void *userData; /* Passed to keyEq and keyHash functions */            \
         uint32_t len;                                                          \
         uint32_t cap; /* Power of two */                                       \
+        uint32_t first, last;                                                  \
     } Name;                                                                    \
     bool prefix##Set(SlVM *vm, Name *map, KeyType key, ValueType value);       \
     ValueType *prefix##Get(Name *map, KeyType key);                            \
@@ -67,9 +69,16 @@
         for (uint32_t idx = hash & mask;; idx = (idx + 1) & mask) {            \
             Name##Bucket *bucket = &map->buckets[idx];                         \
             if (bucket->hash == 0) {                                           \
+                if (map->len == 0) {                                           \
+                    map->first = map->last = idx;                              \
+                } else {                                                       \
+                    map->buckets[map->last].next = idx;                        \
+                    map->last = idx;                                           \
+                }                                                              \
                 bucket->hash = hash;                                           \
                 bucket->key = key;                                             \
                 bucket->value = value;                                         \
+                bucket->next = map->cap;                                       \
                 map->len++;                                                    \
                 return true;                                                   \
             }                                                                  \
@@ -116,14 +125,18 @@
         map->cap = 0;                                                          \
     }
 
-#define slMapForeach(map, BucketType, varName)                                 \
-    for (uint32_t map__i = 0; (map) && map__i < (map)->cap; map__i++)          \
-        if ((map)->buckets[map__i].hash != 0)                                  \
-            for (                                                              \
-                BucketType *varName = &(map)->buckets[map__i];                 \
-                varName;                                                       \
-                varName = NULL                                                 \
-            )
+// NOTE: `break` does not work
+#define slMapForeach(map, BucketType, varName, idxName)                        \
+    for (                                                                      \
+        uint32_t idxName = 0, map__i = (map)->first;                           \
+        map__i < (map)->cap;                                                   \
+        map__i = (map)->buckets[map__i].next, idxName++                        \
+    )                                                                          \
+        for (                                                                  \
+            BucketType *varName = &(map)->buckets[map__i];                     \
+            varName;                                                           \
+            varName = NULL                                                     \
+        )
 
 uint32_t slMemHash(const void *data, size_t len);
 

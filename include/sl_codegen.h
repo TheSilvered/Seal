@@ -11,15 +11,16 @@
 // - b: unsigned byte
 // - s: unsigned 16-bit integer (saved in big endian)
 // - I: signed 24-bit integer (saved in big endian)
+// - i: unsigned 24-bit integer (saved in big endian)
 
 typedef enum SlOpCode {
     SlOp_nop, // no operation
 
-    SlOp_ln,  // dst.r; load null: stack[dst] = null
-    SlOp_lns, // from.r to.r; load nulls: for i in from..=to { stack[i] = null; }
+    SlOp_ln,  // from.r to.r; load nulls: for i in from..=to { stack[i] = null; }
     SlOp_li8, // dst.r val.B; load int8_t: stack[dst] = int(val)
     SlOp_lkb, // dst.r src.b; load constant by byte:  stack[dst] = constants[src]
-    SlOp_lks, // dst.r src.b; load constant by short: stack[dst] = constants[src]
+    SlOp_lks, // dst.r src.s; load constant by short: stack[dst] = constants[src]
+    SlOp_lki, // dst.r src.i; load constant by short: stack[dst] = constants[src]
     SlOp_cpy, // dst.r src.r; copy: stack[dst] = stack[src]
     SlOp_ls,  // dst.r src.r; load shared: stack[dst] = shared[src].value
     SlOp_sts, // dst.r src.r; store shared: shared[dst].value = stack[src]
