@@ -132,16 +132,6 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
     }
 }
 
-// static void printStrs(const SlAst *ast, const SlStrIdx *strs, uint32_t count) {
-//     for (uint32_t i = 0; i < count; i++) {
-//         SlStrIdx str = strs[i];
-//         printf("%.*s", (int)str.len, (char *)&ast->strs[str.idx]);
-//         if (i + 1 < count) {
-//             printf(", ");
-//         }
-//     }
-// }
-
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
     printf(
         "%*sblock [shared=%"PRIu16", funcs=%"PRIu16"]\n",

@@ -15,12 +15,9 @@ int main(int argc, char **argv) {
     SlVM vm = { 0 };
     SlSource *src = slSourceFromFile(&vm, argv[1]);
     checkError(&vm);
-    SlAst ast = slParse(&vm, src);
-    checkError(&vm);
-    slPrintAst(&ast);
-    /*
     SlObj mainFunc = slGenCode(&vm, src);
     checkError(&vm);
+    /*
     SlObj result = slRun(&vm, mainFunc);
     checkError(&vm);
     */

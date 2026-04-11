@@ -1,4 +1,3 @@
-#include <stdarg.h>
 #include <string.h>
 
 #include "sl_array.h"
@@ -44,15 +43,19 @@ typedef struct GenState {
 static void emitU8(const GenState *g, uint8_t n);
 static void emitI8(const GenState *g, int8_t n);
 static void emitU16(const GenState *g, uint16_t n);
-static void emitI24(const GenState *g, int32_t n);
+// static void emitI24(const GenState *g, int32_t n);
 static void emitU24(const GenState *g, int32_t n);
 static void emitOp(const GenState *g, SlOpCode opCode);
 // Use absolute register
 static void emitRegAbs(const GenState *g, int16_t reg);
 // Use reg + g->func->block->baseReg
 static void emitRegRel(const GenState *g, uint16_t reg);
-// Emit appropriate SlOp_lk*, use g->outReg for dst
-static void emitLk(const GenState *g, int32_t src);
+// Emit appropriate op, that loads from the constants with an appropriate
+// integer
+// op - the byte version of the opcode (e.g. SlOp_lkb)
+// src - the index of the constant
+// g->outReg is used as the destination
+static void emitKOp(const GenState *g, SlOpCode op, int32_t src);
 
 static void setError(const GenState *g, SlNodeIdx node, const char *fmt, ...);
 
@@ -69,7 +72,8 @@ static int32_t addConst(const GenState *g, SlNodeIdx node, SlObj obj);
 
 static SlNode *getNode(const GenState *g, SlNodeIdx idx);
 
-static SlObj genNamedLambda(GenState *g, SlNodeIdx idx, SlStrIdx name);
+static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name);
+
 static bool genStmnt(GenState *g, SlNodeIdx idx);
 static void genBlock(GenState *g, SlNodeIdx idx);
 static void genVarDeclr(GenState *g, SlNodeIdx idx);
@@ -79,10 +83,12 @@ static void genRetStmnt(GenState *g, SlNodeIdx idx);
 // g->outReg contains the register where the value of the expression is stored
 
 static bool genExpr(GenState *g, SlNodeIdx idx);
-static void genLambda(GenState *g, SlNodeIdx idx);
+static void genLambda(GenState *g, SlNodeIdx idx, SlStrIdx name);
 static void genBinOp(GenState *g, SlNodeIdx idx);
 static void genNumInt(GenState *g, SlNodeIdx idx);
 static void genAccess(GenState *g, SlNodeIdx idx);
+
+void printPrototype(SlObj main);
 
 SlObj slGenCode(SlVM *vm, const SlSource *source) {
     SlAst ast = slParse(vm, source);
@@ -98,11 +104,13 @@ SlObj slGenCode(SlVM *vm, const SlSource *source) {
         .func = NULL
     };
 
-    SlObj main = genNamedLambda(&g, ast.root, (SlStrIdx){ .idx = 0, .len = 0 });
+    SlObj main = genProtoObj(&g, ast.root, (SlStrIdx){ .idx = 0, .len = 0 });
     slDestroyAst(&ast);
     if (main.type == SlObj_Prototype && main.as.proto->debugInfo != NULL) {
         main.as.proto->debugInfo->name = (uint8_t *)".main";
     }
+    if (main.type != SlObj_Null)
+        printPrototype(main);
 
     return main;
 }
@@ -128,10 +136,10 @@ static void emitU24(const GenState *g, int32_t n) {
     emitU8(g, (n >>  0) & 0xff);
 }
 
-static void emitI24(const GenState *g, int32_t n) {
-    assert(n < 0x800000 && n >= -0x800000);
-    emitU24(g, n);
-}
+// static void emitI24(const GenState *g, int32_t n) {
+//     assert(n < 0x800000 && n >= -0x800000);
+//     emitU24(g, n);
+// }
 
 static void emitOp(const GenState *g, SlOpCode opCode) {
     emitU8(g, (uint8_t)opCode);
@@ -143,11 +151,11 @@ static void emitRegRel(const GenState *g, uint16_t reg) {
     uint16_t baseReg = g->func->block->baseReg;
 
     assert((uint32_t)reg + (uint32_t)baseReg < 0xffff);
-    emitRegAbs(g, (int16_t)(reg) + baseReg);
+    emitRegAbs(g, (int16_t)(reg + baseReg));
 }
 
 static void emitRegAbs(const GenState *g, int16_t reg) {
-    assert(reg > 0 && reg <= _maxReg);
+    assert(reg >= 0 && reg <= _maxReg);
     if (reg < 0x80) {
         emitU8(g, (uint8_t)reg);
     } else {
@@ -155,19 +163,19 @@ static void emitRegAbs(const GenState *g, int16_t reg) {
     }
 }
 
-static void emitLk(const GenState *g, int32_t src) {
+static void emitKOp(const GenState *g, SlOpCode op, int32_t src) {
     assert(src <= _maxConst);
     assert(g->outReg >= 0);
     if (src <= 0xff) {
-        emitOp(g, SlOp_lkb);
+        emitOp(g, op);
         emitRegAbs(g, g->outReg);
         emitU8(g, (uint8_t)src);
     } else if (src <= 0xffff) {
-        emitOp(g, SlOp_lks);
+        emitOp(g, op + 1);
         emitRegAbs(g, g->outReg);
         emitU16(g, (uint16_t)src);
     } else {
-        emitOp(g, SlOp_lki);
+        emitOp(g, op + 2);
         emitRegAbs(g, g->outReg);
         emitU24(g, src);
     }
@@ -211,7 +219,7 @@ static bool useSlots(const GenState *g, SlNodeIdx node, size_t count) {
 
 static void releaseSlots(const GenState *g, uint16_t first) {
     assert(g->func != NULL);
-    assert(first < g->func->usedStack);
+    assert(first <= g->func->usedStack);
     g->func->usedStack = first;
 }
 
@@ -221,8 +229,8 @@ static int16_t setOutRegRel(GenState *g, int16_t reg) {
     uint16_t baseReg = g->func->block->baseReg;
 
     if (reg < 0) return setOutRegAbs(g, -1);
-    assert((uint32_t)reg + (uint32_t)baseReg < 0xffff);
-    return setOutRegAbs(g, reg + baseReg);
+    assert((uint32_t)reg + (uint32_t)baseReg <= _maxReg);
+    return setOutRegAbs(g, (int16_t)(reg + baseReg));
 }
 
 static int16_t setOutRegAbs(GenState *g, int16_t reg) {
@@ -261,6 +269,7 @@ static SlNode *getNode(const GenState *g, SlNodeIdx idx) {
 
 static bool genStmnt(GenState *g, SlNodeIdx idx) {
     if (g->vm->error.occurred) return false;
+    g->outReg = -1;
 
     SlNode *node = getNode(g, idx);
     uint16_t firstSlot = getSlot(g);
@@ -288,8 +297,7 @@ static bool genStmnt(GenState *g, SlNodeIdx idx) {
     // When a statement ends, the number of slots used after is the same as the
     // number of slots used before (since variables are pre-allocated)
     releaseSlots(g, firstSlot);
-    g->outReg = -1;
-    return g->vm->error.occurred;
+    return !g->vm->error.occurred;
 }
 
 static void genBlock(GenState *g, SlNodeIdx idx) {
@@ -337,7 +345,7 @@ break_foreach:
         emitRegRel(g, varCount);
         emitRegRel(g, varCount + sharedCount - 1);
     }
-    releaseSlots(g, g->outReg);
+    releaseSlots(g, baseReg);
     g->func->block = newBlockState.parent;
 }
 
@@ -350,24 +358,14 @@ static void genVarDeclr(GenState *g, SlNodeIdx idx) {
     assert(varInfo != NULL);
 
     uint16_t slotIdx = *varInfo & 0xff;
-    int16_t shrIdx = (int16_t)(*varInfo >> 16) - 1;
+    int16_t shrIdx = (int16_t)((*varInfo >> 16) - 1);
 
-    int16_t oldOutReg = setOutRegRel(g, slotIdx);
+    int16_t oldOutReg = setOutRegRel(g, (int16_t)slotIdx);
 
     SlNode *value = getNode(g, node->as.varDeclr.value);
     if (value->kind == SlNode_Lambda) {
-        SlObj lambda = genNamedLambda(
-            g,
-            node->as.varDeclr.value,
-            node->as.varDeclr.name
-        );
-        if (lambda.type == SlObj_Null) return;
-        int32_t constIdx = addConst(g, node->as.varDeclr.value, lambda);
-        if (constIdx == -1) {
-            slDelRef(lambda);
-            return;
-        }
-        emitLk(g, constIdx);
+        genLambda(g, node->as.varDeclr.value, node->as.varDeclr.name);
+        if (g->vm->error.occurred) return;
     } else {
         if (!genExpr(g, node->as.varDeclr.value)) return;
     }
@@ -381,23 +379,23 @@ static void genVarDeclr(GenState *g, SlNodeIdx idx) {
 }
 
 static void genPrint(GenState *g, SlNodeIdx idx) {
-    emitOp(g, SlOp_print);
     if (!genExpr(g, getNode(g, idx)->as.print)) return;
+    emitOp(g, SlOp_print);
     emitRegAbs(g, g->outReg);
 }
 
 static void genRetStmnt(GenState *g, SlNodeIdx idx) {
-    emitOp(g, SlOp_ret);
     if (!genExpr(g, getNode(g, idx)->as.print)) return;
+    emitOp(g, SlOp_ret);
     emitRegAbs(g, g->outReg);
 }
 
-static SlObj genNamedLambda(GenState *g, SlNodeIdx idx, SlStrIdx name) {
+static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name) {
     (void)name; // TODO: generate line info
 
     FuncState newTop = {
         .parent = g->func,
-        .externalVars = { .userData = g->ast.strs },
+        .externalVars = { .userData = g->ast.strs }
     };
 
     // ReSharper disable once CppDFALocalValueEscapesFunction
@@ -453,7 +451,7 @@ static bool genExpr(GenState *g, SlNodeIdx idx) {
         genNumInt(g, idx);
         break;
     case SlNode_Lambda:
-        genLambda(g, idx);
+        genLambda(g, idx, (SlStrIdx){ 0 });
         break;
     case SlNode_INVALID:
     case SlNode_Block:
@@ -463,29 +461,29 @@ static bool genExpr(GenState *g, SlNodeIdx idx) {
         assert(false && "unreachable");
         return false;
     }
-    return g->vm->error.occurred;
+    return !g->vm->error.occurred;
 }
 
-static void genLambda(GenState *g, SlNodeIdx idx) {
-    if (!useOutRegNew(g, idx)) return;
-    SlObj lambda = genNamedLambda(g, idx, (SlStrIdx){ .idx = 0, .len = 0 });
+static void genLambda(GenState *g, SlNodeIdx idx, SlStrIdx name) {
+    SlObj lambda = genProtoObj(g, idx, name);
     if (lambda.type == SlObj_Null) return;
     int32_t constIdx = addConst(g, idx, lambda);
     if (constIdx < 0) {
         slDelRef(lambda);
         return;
     }
-    emitLk(g, constIdx);
+    if (!useOutRegNew(g, idx)) return;
+    emitKOp(g, SlOp_mkfb, constIdx);
 }
 
 static void genBinOp(GenState *g, SlNodeIdx idx) {
-    if (!useOutRegNew(g, idx)) return;
-    uint16_t dst = setOutRegAbs(g, -1);
+    uint16_t top = getSlot(g);
+    int16_t dst = setOutRegAbs(g, -1);
     SlNode *node = getNode(g, idx);
     if (!genExpr(g, node->as.binOp.lhs)) return;
-    uint16_t lhs = setOutRegAbs(g, -1);
+    int16_t lhs = setOutRegAbs(g, -1);
     if (!genExpr(g, node->as.binOp.rhs)) return;
-    uint16_t rhs = setOutRegAbs(g, dst);
+    int16_t rhs = setOutRegAbs(g, dst);
 
     switch (node->as.binOp.op) {
     case SlBinOp_Add:
@@ -507,8 +505,11 @@ static void genBinOp(GenState *g, SlNodeIdx idx) {
         emitOp(g, SlOp_pow);
         break;
     }
+    releaseSlots(g, top);
+    g->outReg = dst;
+    if (!useOutRegNew(g, idx)) return;
 
-    emitRegAbs(g, dst);
+    emitRegAbs(g, g->outReg);
     emitRegAbs(g, lhs);
     emitRegAbs(g, rhs);
 }
@@ -523,10 +524,287 @@ static void genNumInt(GenState *g, SlNodeIdx idx) {
     } else {
         int32_t constIdx = addConst(g, idx, slObjInt(num));
         if (constIdx < 0) return;
-        emitLk(g, constIdx);
+        emitKOp(g, SlOp_lkb, constIdx);
     }
 }
 
-static void genAccess(GenState *g, SlNodeIdx idx) {
+static bool findVar(
+    SlVM *vm,
+    FuncState *f,
+    SlStrIdx name,
+    int16_t *outIdx,
+    bool *outFromShared
+) {
+    assert(f != NULL);
+    uint32_t *info = NULL;
 
+    // First check the local variables
+    BlockState *block = f->block;
+    while (block != NULL) {
+        info = slStrMapGet(block->vars, name);
+        if (info != NULL) {
+            *outIdx = (int16_t)((*info & 0xff) + block->baseReg);
+            *outFromShared = false;
+            return true;
+        }
+        block = block->parent;
+    }
+
+    *outFromShared = true;
+
+    // Then check the shared values
+    info = slStrMapGet(&f->externalVars, name);
+    if (info != NULL) {
+        *outIdx = (int16_t)(*info & 0xff);
+        return true;
+    }
+
+    // Otherwise get the variable from the parent function and add it to the
+    // shared values
+    int16_t idx;
+    bool fromShared;
+    if (!findVar(vm, f->parent, name, &idx, &fromShared)) return false;
+
+    *outIdx = (int16_t)f->externalVars.len;
+    uint32_t externalValue = (fromShared << 31) | (idx << 16) | (*outIdx);
+    return slStrMapSet(vm, &f->externalVars, name, externalValue);
+}
+
+static void genAccess(GenState *g, SlNodeIdx idx) {
+    bool fromShared;
+    int16_t varSlot;
+
+    SlStrIdx name = getNode(g, idx)->as.access;
+    if (!findVar(g->vm, g->func, name, &varSlot, &fromShared)) return;
+
+    if (fromShared) {
+        if (!useOutRegNew(g, idx)) return;
+        emitOp(g, SlOp_ls);
+        emitRegAbs(g, g->outReg);
+        emitRegAbs(g, varSlot);
+    } else if (g->outReg >= 0) {
+        emitOp(g, SlOp_cpy);
+        emitRegAbs(g, g->outReg);
+        emitRegAbs(g, varSlot);
+    } else {
+        g->outReg = varSlot;
+    }
+}
+
+// BYTECODE PRINTING
+
+static void printBytecode(const uint8_t *bytecode, uint32_t len) {
+    uint32_t i = 0;
+    while (i < len) {
+        uint8_t op = bytecode[i++];
+        const char *fmt;
+        switch (op) {
+        case SlOp_nop:
+            printf("\tnop");
+            fmt = "";
+            break;
+        case SlOp_ln:
+            printf("\tln");
+            fmt = "rr";
+            break;
+        case SlOp_li8:
+            printf("\tli8");
+            fmt = "rB";
+            break;
+        case SlOp_lkb:
+            printf("\tlkb");
+            fmt = "rb";
+            break;
+        case SlOp_lks:
+            printf("\tlks");
+            fmt = "rs";
+            break;
+        case SlOp_lki:
+            printf("\tlki");
+            fmt = "ri";
+            break;
+        case SlOp_cpy:
+            printf("\tcpy");
+            fmt = "rr";
+            break;
+        case SlOp_ls:
+            printf("\tls");
+            fmt = "rr";
+            break;
+        case SlOp_sts:
+            printf("\tsts");
+            fmt = "rr";
+            break;
+        case SlOp_mks:
+            printf("\tmks");
+            fmt = "rr";
+            break;
+        case SlOp_dts:
+            printf("\tdts");
+            fmt = "rr";
+            break;
+        case SlOp_add:
+            printf("\tadd");
+            fmt = "rrr";
+            break;
+        case SlOp_sub:
+            printf("\tsub");
+            fmt = "rrr";
+            break;
+        case SlOp_mul:
+            printf("\tmul");
+            fmt = "rrr";
+            break;
+        case SlOp_div:
+            printf("\tdiv");
+            fmt = "rrr";
+            break;
+        case SlOp_mod:
+            printf("\tmod");
+            fmt = "rrr";
+            break;
+        case SlOp_pow:
+            printf("\tpow");
+            fmt = "rrr";
+            break;
+        case SlOp_print:
+            printf("\tprint");
+            fmt = "r";
+            break;
+        case SlOp_mkfb:
+            printf("\tmkfb");
+            fmt = "rb";
+            break;
+        case SlOp_mkfs:
+            printf("\tmkfs");
+            fmt = "rs";
+            break;
+        case SlOp_mkfi:
+            printf("\tmkfi");
+            fmt = "ri";
+            break;
+        case SlOp_call:
+            printf("\tcall");
+            fmt = "rr";
+            break;
+        case SlOp_tcall:
+            printf("\ttcall");
+            fmt = "rr";
+            break;
+        case SlOp_ret:
+            printf("\tret");
+            fmt = "r";
+            break;
+        case SlOp_jmp:
+            printf("\tjmp");
+            fmt = "I";
+            break;
+        case SlOp_jtr:
+            printf("\tjtr");
+            fmt = "rI";
+            break;
+        case SlOp_jfl:
+            printf("\tjfl");
+            fmt = "rI";
+            break;
+        case SlOp_jlt:
+            printf("\tjlt");
+            fmt = "rrI";
+            break;
+        case SlOp_jle:
+            printf("\tjle");
+            fmt = "rrI";
+            break;
+        case SlOp_jeq:
+            printf("\tjeq");
+            fmt = "rrI";
+            break;
+        case SlOp_jne:
+            printf("\tjne");
+            fmt = "rrI";
+            break;
+        default:
+            printf("ERROR unknown op %d", op);
+            return;
+        }
+
+        while (*fmt) {
+            switch (*fmt) {
+            case 'r': {
+                uint8_t b0 = bytecode[i++];
+                if (b0 < 0x80) {
+                    printf("\t%u", b0);
+                    break;
+                }
+                uint8_t b1 = bytecode[i++];
+                printf("\t%u", ((b0 & 0x7f) << 8) + b1 + 0x80);
+                break;
+            }
+            case 'b':
+                printf("\t%u", bytecode[i++]);
+                break;
+            case 'B':
+                printf("\t%i", bytecode[i++]);
+                break;
+            case 's':
+                printf("\t%u", (bytecode[i] << 8) + bytecode[i + 1]);
+                i += 2;
+                break;
+            case 'S':
+                printf("\t%d", (bytecode[i] << 8) + bytecode[i + 1]);
+                i += 2;
+                break;
+            case 'i':
+                printf(
+                    "\t%u",
+                    (bytecode[i] << 16) + (bytecode[i + 1] << 8) + bytecode[i + 2]
+                );
+                i += 3;
+                break;
+            case 'I':
+                printf(
+                   "\t%d",
+                   (bytecode[i] << 16) + (bytecode[i + 1] << 8) + bytecode[i + 2]
+                );
+                i += 3;
+                break;
+            default:
+                printf("Bad format: '%s'", fmt);
+                return;
+            }
+            fmt++;
+        }
+        printf("\n");
+    }
+}
+
+void printPrototype(SlObj main) {
+    Constants toPrint = { 0 };
+    SlVM dummy = { 0 };
+    if (!constsPush(&dummy, &toPrint, main)) return;
+
+    for (uint32_t i = 0; i < toPrint.len; i++) {
+        assert(toPrint.data[i].type == SlObj_Prototype);
+        SlPrototype *proto = toPrint.data[i].as.proto;
+        printf("<%p> bytecode:\n", (void *)proto);
+        printBytecode(proto->bytes, proto->size);
+        if (proto->constCount == 0) continue;
+        printf("----constants:\n");
+        for (uint32_t j = 0; j < proto->constCount; j++) {
+            SlObj obj = proto->constants[j];
+            printf("\t[%u] (%s)", j, slTypeName(obj));
+            switch (obj.type) {
+            case SlObj_Int:
+                printf(" %"PRIi64, obj.as.numInt);
+                break;
+            case SlObj_Prototype:
+                printf(" <%p>", (void *)obj.as.proto);
+                if (!constsPush(&dummy, &toPrint, obj)) return;
+                break;
+            default:
+                break;
+            }
+            printf("\n");
+        }
+    }
 }

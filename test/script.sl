@@ -1,7 +1,5 @@
-var a = 1;
-var b = 2;
-var c = 3;
+var a = 2;
 
-func f(hello) {
-    print hello;
+func f() {
+print a;
 }

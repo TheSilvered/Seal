@@ -35,7 +35,9 @@ typedef enum SlOpCode {
     SlOp_pow,  // dst.r lhs.r rhs.r; dst = lhs ^ rhs
 
     SlOp_print,// src.r; print(str(stack[src]) + '\n')
-    SlOp_mkf,  // dst.r func.i; make function: stack[dst] = closure(funcs[func])
+    SlOp_mkfb, // dst.r func.b; make function: stack[dst] = closure(constants[func])
+    SlOp_mkfs, // dst.r func.s; make function: stack[dst] = closure(constants[func])
+    SlOp_mkfi, // dst.r func.i; make function: stack[dst] = closure(constants[func])
     SlOp_call, // func.r last.r;
                // stack[func] = stack[func](stack[func + 1], ..., stack[last])
     SlOp_tcall,// func.r last.r; perform a tail call, args are the same as SlOp_call
