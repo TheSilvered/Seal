@@ -78,6 +78,7 @@ static SlNodeIdx parseVarDeclr(ParserState *p);
 static SlNodeIdx parseFuncDeclr(ParserState *p);
 static SlNodeIdx parsePrint(ParserState *p);
 static SlNodeIdx parseBlock(ParserState *p);
+static SlNodeIdx parseRetStmnt(ParserState *p);
 static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
 static SlNodeIdx parseValue(ParserState *p);
@@ -194,9 +195,10 @@ static void printNumInt(SlNode node, uint32_t indent) {
 
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent) {
     printf(
-        "%*s"S_Fmt" (access)\n",
+        "%*s"S_Fmt" (%s access)\n",
         indent * INDENT_WIDTH, "",
-        S_Arg(node.as.access, ast->strs)
+        S_Arg(node.as.access.name, ast->strs),
+        node.as.access.local ? "local" : "nonlocal"
     );
 }
 
@@ -445,6 +447,8 @@ SlNodeIdx parseStatement(ParserState *p) {
         return parseFuncDeclr(p);
     case SlToken_LeftCurly:
         return parseBlock(p);
+    case SlToken_KwReturn:
+        return parseRetStmnt(p);
     default:
         setError(
             p,
@@ -584,6 +588,22 @@ error:
     return -1;
 }
 
+static SlNodeIdx parseRetStmnt(ParserState *p) {
+    uint32_t line = next(p).line;
+    SlNodeIdx expr = -1;
+    if (token(p).kind != SlToken_Semicolon) {
+        expr = parseExpr(p);
+        if (expr == -1) return -1;
+    }
+    next(p);
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_RetStmnt,
+        .line = line,
+        .as.retStmnt = expr
+    });
+}
+
 static SlNodeIdx parsePrint(ParserState *p) {
     uint32_t line = next(p).line;
     SlNodeIdx expr = parseExpr(p);
@@ -711,7 +731,10 @@ static SlNodeIdx parseValue(ParserState *p) {
         return addNode(p, (SlNode){
             .kind = SlNode_Access,
             .line = tok.line,
-            .as.access = tok.as.ident
+            .as.access = {
+                .name = tok.as.ident,
+                .local = true // actually set in resolveVars
+            }
         });
     }
     default:
@@ -729,7 +752,13 @@ static bool addVar(const ParserState *p, SlStrIdx name) {
     return slStrMapSet(p->vm, p->vars, name, p->vars->len);
 }
 
-static bool refVar(const ParserState *p, SlStrIdx name) {
+typedef enum RefKind {
+    Ref_failed,
+    Ref_local,
+    Ref_nonlocal
+} RefKind;
+
+static RefKind refVar(const ParserState *p, SlStrIdx name) {
     assert(p->vt != NULL);
     uint32_t funcLevel = p->vt->funcLevel;
     VarTable *vt = p->vt;
@@ -740,12 +769,13 @@ static bool refVar(const ParserState *p, SlStrIdx name) {
             // then add a share index
             if (vt->funcLevel != funcLevel && *var >> 16 == 0) {
                 *var = ++vt->sharedCount << 16 | *var;
+                return Ref_nonlocal;
             }
-            return true;
+            return Ref_local;
         }
         vt = vt->parent;
     }
-    return false;
+    return Ref_failed;
 }
 
 static bool resolveBlockVars(ParserState *p, SlNode *node);
@@ -764,16 +794,21 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
     case SlNode_NumInt:
         return true;
     case SlNode_Access:
-        if (!refVar(p, node->as.access)) {
+        switch (refVar(p, node->as.access.name)) {
+        case Ref_failed:
             setErrorWLine(
                 p,
                 node->line,
                 "unknown variable '"S_Fmt"'",
-                S_Arg(node->as.access, p->tokens.strs)
+                S_Arg(node->as.access.name, p->tokens.strs)
             );
             return false;
+        case Ref_nonlocal:
+            node->as.access.local = false;
+            // fallthrough
+        case Ref_local:
+            return true;
         }
-        return true;
     case SlNode_Print:
         return resolveVars(p, node->as.print);
     case SlNode_Lambda: {

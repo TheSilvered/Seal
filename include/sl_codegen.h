@@ -42,6 +42,7 @@ typedef enum SlOpCode {
                // stack[func] = stack[func](stack[func + 1], ..., stack[last])
     SlOp_tcall,// func.r last.r; perform a tail call, args are the same as SlOp_call
     SlOp_ret,  // src.r; return src
+    SlOp_retnl,// ; return null
 
     SlOp_jmp, // diff.I; jump: pc += diff
     SlOp_jtr, // val.r diff.I; jump if true: if (stack[val]) pc += diff

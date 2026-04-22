@@ -385,9 +385,14 @@ static void genPrint(GenState *g, SlNodeIdx idx) {
 }
 
 static void genRetStmnt(GenState *g, SlNodeIdx idx) {
-    if (!genExpr(g, getNode(g, idx)->as.print)) return;
-    emitOp(g, SlOp_ret);
-    emitRegAbs(g, g->outReg);
+    SlNodeIdx expr = getNode(g, idx)->as.retStmnt;
+    if (expr != -1) {
+        if (!genExpr(g, expr)) return;
+        emitOp(g, SlOp_ret);
+        emitRegAbs(g, g->outReg);
+    } else {
+        emitOp(g, SlOp_retnl);
+    }
 }
 
 static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name) {
@@ -405,6 +410,8 @@ static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name) {
     assert(g->ast.nodes[body].kind == SlNode_Block);
 
     if (!genStmnt(g, body)) return slNull;
+    emitOp(g, SlOp_retnl);
+    if (g->vm->error.occurred) return slNull;
 
     SlSharedInfo *sharedInfo = memAllocZeroed(
         newTop.externalVars.len,
@@ -532,6 +539,7 @@ static bool findVar(
     SlVM *vm,
     FuncState *f,
     SlStrIdx name,
+    bool nonlocal, // if true skip the local variables when searching
     int16_t *outIdx,
     bool *outFromShared
 ) {
@@ -539,15 +547,16 @@ static bool findVar(
     uint32_t *info = NULL;
 
     // First check the local variables
-    BlockState *block = f->block;
-    while (block != NULL) {
-        info = slStrMapGet(block->vars, name);
-        if (info != NULL) {
-            *outIdx = (int16_t)((*info & 0xff) + block->baseReg);
-            *outFromShared = false;
-            return true;
+    if (!nonlocal) {
+        BlockState *block = f->block;
+        while (block != NULL) {
+            info = slStrMapGet(block->vars, name);
+            if (info != NULL) {
+                *outIdx = (int16_t)((*info & 0xff) + block->baseReg);
+                return true;
+            }
+            block = block->parent;
         }
-        block = block->parent;
     }
 
     *outFromShared = true;
@@ -563,7 +572,9 @@ static bool findVar(
     // shared values
     int16_t idx;
     bool fromShared;
-    if (!findVar(vm, f->parent, name, &idx, &fromShared)) return false;
+    if (!findVar(vm, f->parent, name, false, &idx, &fromShared)) {
+        return false;
+    }
 
     *outIdx = (int16_t)f->externalVars.len;
     uint32_t externalValue = (fromShared << 31) | (idx << 16) | (*outIdx);
@@ -574,8 +585,9 @@ static void genAccess(GenState *g, SlNodeIdx idx) {
     bool fromShared;
     int16_t varSlot;
 
-    SlStrIdx name = getNode(g, idx)->as.access;
-    if (!findVar(g->vm, g->func, name, &varSlot, &fromShared)) return;
+    SlStrIdx name = getNode(g, idx)->as.access.name;
+    bool local = getNode(g, idx)->as.access.local;
+    if (!findVar(g->vm, g->func, name, !local, &varSlot, &fromShared)) return;
 
     if (fromShared) {
         if (!useOutRegNew(g, idx)) return;
@@ -694,6 +706,10 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
         case SlOp_ret:
             printf("\tret");
             fmt = "r";
+            break;
+        case SlOp_retnl:
+            printf("\tretnl");
+            fmt = "";
             break;
         case SlOp_jmp:
             printf("\tjmp");

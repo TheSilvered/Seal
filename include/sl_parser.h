@@ -38,7 +38,10 @@ typedef struct SlNode {
             SlStrIdx name;
             SlNodeIdx value;
         } varDeclr;
-        SlStrIdx access;
+        struct {
+            SlStrIdx name;
+            bool local;
+        } access;
         struct {
             SlNodeIdx *nodes;
             SlStrMap *vars;
@@ -58,6 +61,11 @@ typedef struct SlNode {
             uint16_t paramCount;
             SlNodeIdx body;
         } lambda;
+        struct {
+            SlNodeIdx condition;
+            SlNodeIdx ifTrue;
+            SlNodeIdx ifFalse;
+        } ifStmnt;
         SlNodeIdx retStmnt;
         SlNodeIdx print;
         int64_t numInt;

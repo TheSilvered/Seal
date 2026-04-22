@@ -33,6 +33,9 @@ static const struct {
 } keywords[] = {
     { "var", SlToken_KwVar },
     { "func", SlToken_KwFunc },
+    { "return", SlToken_KwReturn },
+    { "if", SlToken_KwIf },
+    { "else", SlToken_KwElse },
     { "print", SlToken_KwPrint }
 };
 static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
@@ -84,6 +87,12 @@ const char *slTokenKindToStr(SlTokenKind kind) {
         return "the keyword 'var'";
     case SlToken_KwFunc:
         return "the keyword 'func'";
+    case SlToken_KwReturn:
+        return "the keyword 'return'";
+    case SlToken_KwIf:
+        return "the keyword 'if'";
+    case SlToken_KwElse:
+        return "the keyword 'else'";
     case SlToken_KwPrint:
         return "the keyword 'print'";
     case SlToken_Eof:
