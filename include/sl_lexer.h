@@ -24,6 +24,12 @@ typedef enum SlTokenKind {
     SlToken_LeftCurly,
     SlToken_RightCurly,
     SlToken_Equals,
+    SlToken_LessThan,
+    SlToken_LessThanEquals,
+    SlToken_GreaterThan,
+    SlToken_GreaterThanEquals,
+    SlToken_DoubleEquals,
+    SlToken_BangEquals,
 
     SlToken_KwVar,
     SlToken_KwFunc,

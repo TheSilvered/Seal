@@ -9,6 +9,7 @@
 #define _maxConst 0xffffff
 #define S_Fmt "%.*s"
 #define S_Arg(str) (int)(str).len, (char *)(g->ast.strs + (str).idx)
+#define isOpJumpable(op) ((op) >= SlBinOp_Lt)
 
 slArrayType(SlObj, Constants, consts)
 slArrayImpl(SlObj, Constants, consts)
@@ -56,6 +57,10 @@ static void emitRegRel(const GenState *g, uint16_t reg);
 // src - the index of the constant
 // g->outReg is used as the destination
 static void emitKOp(const GenState *g, SlOpCode op, int32_t src);
+static uint32_t placeholderI24(const GenState *g);
+static void substituteI24(const GenState *g, uint32_t idx, int32_t val);
+
+static uint32_t getPos(const GenState *g);
 
 static void setError(const GenState *g, SlNodeIdx node, const char *fmt, ...);
 
@@ -77,6 +82,7 @@ static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name);
 static bool genStmnt(GenState *g, SlNodeIdx idx);
 static void genBlock(GenState *g, SlNodeIdx idx);
 static void genVarDeclr(GenState *g, SlNodeIdx idx);
+static void genIfStmnt(GenState *g, SlNodeIdx idx);
 static void genPrint(GenState *g, SlNodeIdx idx);
 static void genRetStmnt(GenState *g, SlNodeIdx idx);
 
@@ -179,6 +185,28 @@ static void emitKOp(const GenState *g, SlOpCode op, int32_t src) {
         emitRegAbs(g, g->outReg);
         emitU24(g, src);
     }
+}
+
+static uint32_t placeholderI24(const GenState *g) {
+    uint32_t idx = getPos(g);
+    emitU8(g, 0);
+    emitU8(g, 0);
+    emitU8(g, 0);
+    return idx;
+}
+
+static void substituteI24(const GenState *g, uint32_t idx, int32_t val) {
+    assert(g->func != NULL);
+    assert(g->func->bytecode.len > idx + 2);
+
+    g->func->bytecode.data[idx + 0] = val >> 16;
+    g->func->bytecode.data[idx + 1] = (val >> 8) & 0xff;
+    g->func->bytecode.data[idx + 2] = val & 0xff;
+}
+
+static uint32_t getPos(const GenState *g) {
+    assert(g->func != NULL);
+    return g->func->bytecode.len;
 }
 
 static void setError(const GenState *g, SlNodeIdx node, const char *fmt, ...) {
@@ -287,6 +315,9 @@ static bool genStmnt(GenState *g, SlNodeIdx idx) {
     case SlNode_VarDeclr:
         genVarDeclr(g, idx);
         break;
+    case SlNode_IfStmnt:
+        genIfStmnt(g, idx);
+        break;
     case SlNode_Print:
         genPrint(g, idx);
         break;
@@ -378,6 +409,28 @@ static void genVarDeclr(GenState *g, SlNodeIdx idx) {
     }
 }
 
+static void genIfStmnt(GenState *g, SlNodeIdx idx) {
+    SlNode *node = getNode(g, idx);
+    if (!genExpr(g, node->as.ifStmnt.condition)) return;
+    emitOp(g, SlOp_jfl);
+    emitRegAbs(g, g->outReg);
+    uint32_t toTrueEnd = placeholderI24(g);
+    uint32_t trueStart = getPos(g);
+    if (!genStmnt(g, node->as.ifStmnt.ifTrue)) return;
+
+    // If there is an else block
+    if (node->as.ifStmnt.ifFalse >= 0) {
+        emitOp(g, SlOp_jmp);
+        uint32_t toFalseEnd = placeholderI24(g);
+        uint32_t falseStart = getPos(g);
+        substituteI24(g, toTrueEnd, (int32_t)(getPos(g) - trueStart));
+        if (!genStmnt(g, node->as.ifStmnt.ifFalse)) return;
+        substituteI24(g, toFalseEnd, (int32_t)(getPos(g) - falseStart));
+    } else {
+        substituteI24(g, toTrueEnd, (int32_t)(getPos(g) - trueStart));
+    }
+}
+
 static void genPrint(GenState *g, SlNodeIdx idx) {
     if (!genExpr(g, getNode(g, idx)->as.print)) return;
     emitOp(g, SlOp_print);
@@ -463,6 +516,7 @@ static bool genExpr(GenState *g, SlNodeIdx idx) {
     case SlNode_INVALID:
     case SlNode_Block:
     case SlNode_VarDeclr:
+    case SlNode_IfStmnt:
     case SlNode_Print:
     case SlNode_RetStmnt:
         assert(false && "unreachable");
@@ -510,6 +564,32 @@ static void genBinOp(GenState *g, SlNodeIdx idx) {
         break;
     case SlBinOp_Pow:
         emitOp(g, SlOp_pow);
+        break;
+    case SlBinOp_Lt:
+        emitOp(g, SlOp_lt);
+        break;
+    case SlBinOp_Le:
+        emitOp(g, SlOp_le);
+        break;
+    case SlBinOp_Gt: {
+        int16_t tmp = lhs;
+        lhs = rhs;
+        rhs = tmp;
+        emitOp(g, SlOp_lt);
+        break;
+    }
+    case SlBinOp_Ge: {
+        int16_t tmp = lhs;
+        lhs = rhs;
+        rhs = tmp;
+        emitOp(g, SlOp_le);
+        break;
+    }
+    case SlBinOp_Eq:
+        emitOp(g, SlOp_eq);
+        break;
+    case SlBinOp_Ne:
+        emitOp(g, SlOp_ne);
         break;
     }
     releaseSlots(g, top);
@@ -609,8 +689,9 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
     uint32_t i = 0;
     while (i < len) {
         uint8_t op = bytecode[i++];
-        const char *fmt;
-        switch (op) {
+        printf("%"PRIu32,  i - 1);
+        const char *fmt = "";
+        switch ((SlOpCode)op) {
         case SlOp_nop:
             printf("\tnop");
             fmt = "";
@@ -675,6 +756,22 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
             printf("\tmod");
             fmt = "rrr";
             break;
+        case SlOp_eq:
+            printf("\teq");
+            fmt = "rrr";
+            break;
+        case SlOp_ne:
+            printf("\tne");
+            fmt = "rrr";
+            break;
+        case SlOp_lt:
+            printf("\tlt");
+            fmt = "rrr";
+            break;
+        case SlOp_le:
+            printf("\tle");
+            fmt = "rrr";
+            break;
         case SlOp_pow:
             printf("\tpow");
             fmt = "rrr";
@@ -713,35 +810,32 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
             break;
         case SlOp_jmp:
             printf("\tjmp");
-            fmt = "I";
+            fmt = "D";
             break;
         case SlOp_jtr:
             printf("\tjtr");
-            fmt = "rI";
+            fmt = "rD";
             break;
         case SlOp_jfl:
             printf("\tjfl");
-            fmt = "rI";
+            fmt = "rD";
             break;
         case SlOp_jlt:
             printf("\tjlt");
-            fmt = "rrI";
+            fmt = "rrD";
             break;
         case SlOp_jle:
             printf("\tjle");
-            fmt = "rrI";
+            fmt = "rrD";
             break;
         case SlOp_jeq:
             printf("\tjeq");
-            fmt = "rrI";
+            fmt = "rrD";
             break;
         case SlOp_jne:
             printf("\tjne");
-            fmt = "rrI";
+            fmt = "rrD";
             break;
-        default:
-            printf("ERROR unknown op %d", op);
-            return;
         }
 
         while (*fmt) {
@@ -781,6 +875,13 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
                 printf(
                    "\t%d",
                    (bytecode[i] << 16) + (bytecode[i + 1] << 8) + bytecode[i + 2]
+                );
+                i += 3;
+                break;
+            case 'D':
+                printf(
+                   "\t[%d]",
+                   i + 3 + (bytecode[i] << 16) + (bytecode[i + 1] << 8) + bytecode[i + 2]
                 );
                 i += 3;
                 break;

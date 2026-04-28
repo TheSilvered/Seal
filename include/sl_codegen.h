@@ -33,6 +33,10 @@ typedef enum SlOpCode {
     SlOp_div,  // dst.r lhs.r rhs.r; dst = lhs / rhs
     SlOp_mod,  // dst.r lhs.r rhs.r; dst = lhs % rhs
     SlOp_pow,  // dst.r lhs.r rhs.r; dst = lhs ^ rhs
+    SlOp_lt,   // dst.r lhs.r rhs.r; dst = lhs < rhs
+    SlOp_le,   // dst.r lhs.r rhs.r; dst = lhs <= rhs
+    SlOp_eq,   // dst.r lhs.r rhs.r; dst = lhs == rhs
+    SlOp_ne,   // dst.r lhs.r rhs.r; dst = lhs != rhs
 
     SlOp_print,// src.r; print(str(stack[src]) + '\n')
     SlOp_mkfb, // dst.r func.b; make function: stack[dst] = closure(constants[func])

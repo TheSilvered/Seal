@@ -11,6 +11,7 @@ typedef enum SlNodeKind {
 
     SlNode_Block,
     SlNode_VarDeclr,
+    SlNode_IfStmnt,
     SlNode_BinOp,
     SlNode_NumInt,
     SlNode_Access,
@@ -25,7 +26,16 @@ typedef enum SlBinOp {
     SlBinOp_Mul,
     SlBinOp_Div,
     SlBinOp_Mod,
-    SlBinOp_Pow
+    SlBinOp_Pow,
+
+
+    SlBinOp_Lt, // NOTE: keep in sync with isOpJumpable in codegen
+    SlBinOp_Le,
+    SlBinOp_Gt,
+    SlBinOp_Ge,
+    SlBinOp_Eq,
+    SlBinOp_Ne
+    // NOTE: do not add new operations at the end
 } SlBinOp;
 
 typedef int32_t SlNodeIdx;

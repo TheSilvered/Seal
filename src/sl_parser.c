@@ -79,7 +79,9 @@ static SlNodeIdx parseFuncDeclr(ParserState *p);
 static SlNodeIdx parsePrint(ParserState *p);
 static SlNodeIdx parseBlock(ParserState *p);
 static SlNodeIdx parseRetStmnt(ParserState *p);
+static SlNodeIdx parseIfStmnt(ParserState *p);
 static SlNodeIdx parseExpr(ParserState *p);
+static SlNodeIdx parseAdd(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
 static SlNodeIdx parseValue(ParserState *p);
 
@@ -88,6 +90,7 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx);
 static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent);
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent);
 static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent);
+static void printIfStmnt(SlNode node, const SlAst *ast, uint32_t indent);
 static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
 static void printNumInt(SlNode node, uint32_t indent);
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent);
@@ -109,6 +112,9 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
         break;
     case SlNode_VarDeclr:
         printVarDeclr(node, ast, indent);
+        break;
+    case SlNode_IfStmnt:
+        printIfStmnt(node, ast, indent);
         break;
     case SlNode_BinOp:
         printBinOp(node, ast, indent);
@@ -162,6 +168,18 @@ static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent) {
     printNode(node.as.varDeclr.value, ast, indent + 1);
 }
 
+static void printIfStmnt(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf("%*sif:\n", indent * INDENT_WIDTH, "");
+    printNode(node.as.ifStmnt.condition, ast, indent + 1);
+    printf("%*sifTrue:\n", indent * INDENT_WIDTH, "");
+    printNode(node.as.ifStmnt.ifTrue, ast, indent + 1);
+
+    if (node.as.ifStmnt.ifFalse == -1) return;
+
+    printf("%*sifFalse:\n", indent * INDENT_WIDTH, "");
+    printNode(node.as.ifStmnt.ifFalse, ast, indent + 1);
+}
+
 static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent) {
     const char *op = NULL;
     switch (node.as.binOp.op) {
@@ -182,6 +200,24 @@ static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent) {
         break;
     case SlBinOp_Pow:
         op = "^";
+        break;
+    case SlBinOp_Lt:
+        op = "<";
+        break;
+    case SlBinOp_Le:
+        op = "<=";
+        break;
+    case SlBinOp_Gt:
+        op = ">";
+        break;
+    case SlBinOp_Ge:
+        op = ">=";
+        break;
+    case SlBinOp_Eq:
+        op = "==";
+        break;
+    case SlBinOp_Ne:
+        op = "!=";
         break;
     }
     printf("%*s%s\n", indent * INDENT_WIDTH, "", op);
@@ -449,6 +485,8 @@ SlNodeIdx parseStatement(ParserState *p) {
         return parseBlock(p);
     case SlToken_KwReturn:
         return parseRetStmnt(p);
+    case SlToken_KwIf:
+        return parseIfStmnt(p);
     default:
         setError(
             p,
@@ -604,6 +642,46 @@ static SlNodeIdx parseRetStmnt(ParserState *p) {
     });
 }
 
+static SlNodeIdx parseIfStmnt(ParserState *p) {
+    uint32_t line = next(p).line;
+
+    SlNodeIdx condition = parseExpr(p);
+    if (condition == -1) return -1;
+    if (!expect(p, SlToken_LeftCurly)) return -1;
+    SlNodeIdx ifTrue = parseBlock(p);
+    if (ifTrue == -1) return -1;
+    SlNodeIdx ifFalse = -1;
+
+    if (token(p).kind != SlToken_KwElse) goto end;
+    next(p);
+
+    if (token(p).kind == SlToken_LeftCurly) {
+        ifFalse = parseBlock(p);
+        if (ifFalse == -1) return -1;
+    } else if (token(p).kind == SlToken_KwIf) {
+        ifFalse = parseIfStmnt(p);
+        if (ifFalse == -1) return -1;
+    } else {
+        setError(
+            p,
+            "expected '{' or 'if' but found %s",
+            slTokenKindToStr(token(p).kind)
+        );
+        return -1;
+    }
+
+end:
+    return addNode(p, (SlNode){
+        .kind = SlNode_IfStmnt,
+        .line = line,
+        .as.ifStmnt = {
+            .condition = condition,
+            .ifTrue = ifTrue,
+            .ifFalse = ifFalse
+        }
+    });
+}
+
 static SlNodeIdx parsePrint(ParserState *p) {
     uint32_t line = next(p).line;
     SlNodeIdx expr = parseExpr(p);
@@ -621,6 +699,53 @@ static SlNodeIdx parsePrint(ParserState *p) {
 }
 
 static SlNodeIdx parseExpr(ParserState *p) {
+    SlNodeIdx lhs = parseAdd(p);
+    if (lhs == -1) {
+        return -1;
+    }
+    for (
+        SlTokenKind kind = token(p).kind;
+        kind == SlToken_DoubleEquals || kind == SlToken_BangEquals ||
+        kind == SlToken_GreaterThan || kind == SlToken_GreaterThanEquals ||
+        kind == SlToken_LessThan || kind == SlToken_LessThanEquals;
+        kind = token(p).kind
+    ) {
+        uint32_t line = token(p).line;
+        next(p);
+        SlNodeIdx rhs = parseAdd(p);
+        if (rhs == -1) {
+            return -1;
+        }
+        SlBinOp op;
+        switch (kind) {
+        case SlToken_DoubleEquals:      op = SlBinOp_Eq; break;
+        case SlToken_BangEquals:        op = SlBinOp_Ne; break;
+        case SlToken_GreaterThan:       op = SlBinOp_Gt; break;
+        case SlToken_GreaterThanEquals: op = SlBinOp_Ge; break;
+        case SlToken_LessThan:          op = SlBinOp_Lt; break;
+        case SlToken_LessThanEquals:    op = SlBinOp_Le; break;
+        default:
+            assert(false && "unreachable");
+        }
+
+        SlNodeIdx binOp = addNode(p, (SlNode){
+            .kind = SlNode_BinOp,
+            .line = line,
+            .as.binOp = {
+                .lhs = lhs,
+                .rhs = rhs,
+                .op = op
+            }
+        });
+        if (binOp == -1) {
+            return -1;
+        }
+        lhs = binOp;
+    }
+    return lhs;
+}
+
+static SlNodeIdx parseAdd(ParserState *p) {
     SlNodeIdx lhs = parseMul(p);
     if (lhs == -1) {
         return -1;
@@ -633,9 +758,7 @@ static SlNodeIdx parseExpr(ParserState *p) {
         uint32_t line = token(p).line;
         next(p);
         SlNodeIdx rhs = parseMul(p);
-        if (rhs == -1) {
-            return -1;
-        }
+        if (rhs == -1) return -1;
         SlNodeIdx binOp = addNode(p, (SlNode){
             .kind = SlNode_BinOp,
             .line = line,
@@ -788,6 +911,16 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
     case SlNode_VarDeclr:
         if (!resolveVars(p, node->as.varDeclr.value)) return false;
         return addVar(p, node->as.varDeclr.name);
+    case SlNode_IfStmnt:
+        if (!resolveVars(p, node->as.ifStmnt.condition)) return false;
+        if (!resolveVars(p, node->as.ifStmnt.ifTrue)) return false;
+        if (
+            node->as.ifStmnt.ifFalse != -1
+            && !resolveVars(p, node->as.ifStmnt.condition)
+        ){
+            return false;
+        }
+        return true;
     case SlNode_BinOp:
         return resolveVars(p, node->as.binOp.lhs)
             && resolveVars(p, node->as.binOp.rhs);

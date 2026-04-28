@@ -41,6 +41,7 @@ static const struct {
 static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
 
 static void setError(const LexerState *l, const char *fmt, ...);
+static uint8_t peekNext(const LexerState *l);
 static bool appendToken(LexerState *l, SlToken token);
 static bool appendSimpleToken(LexerState *l, SlTokenKind kind);
 static uint32_t appendStr(LexerState *l, const uint8_t *str, uint32_t len);
@@ -83,6 +84,18 @@ const char *slTokenKindToStr(SlTokenKind kind) {
         return "'}'";
     case SlToken_Equals:
         return "'='";
+    case SlToken_LessThan:
+        return "'<'";
+    case SlToken_LessThanEquals:
+        return "'<='";
+    case SlToken_GreaterThan:
+        return "'>'";
+    case SlToken_GreaterThanEquals:
+        return "'>='";
+    case SlToken_DoubleEquals:
+        return "'=='";
+    case SlToken_BangEquals:
+        return "'!='";
     case SlToken_KwVar:
         return "the keyword 'var'";
     case SlToken_KwFunc:
@@ -152,20 +165,50 @@ SlTokens slTokenize(SlVM *vm, const SlSource *source) {
         } else if (ch == '}') {
             success = appendSimpleToken(&l, SlToken_RightCurly);
         } else if (ch == '=') {
-            success = appendSimpleToken(&l, SlToken_Equals);
+            if (peekNext(&l) == '=') {
+                success = appendSimpleToken(&l, SlToken_DoubleEquals);
+                l.pos++;
+            } else {
+                success = appendSimpleToken(&l, SlToken_Equals);
+            }
+        } else if (ch == '!') {
+            if (peekNext(&l) == '=') {
+                success = appendSimpleToken(&l, SlToken_BangEquals);
+                l.pos++;
+            } else {
+                goto badCharFound; // TODO: add kind SlToken_Bang
+            }
+        } else if (ch == '>') {
+            if (peekNext(&l) == '=') {
+                success = appendSimpleToken(&l, SlToken_GreaterThanEquals);
+                l.pos++;
+            } else {
+                success = appendSimpleToken(&l, SlToken_GreaterThan);
+            }
+        } else if (ch == '<') {
+            if (peekNext(&l) == '=') {
+                success = appendSimpleToken(&l, SlToken_LessThanEquals);
+                l.pos++;
+            } else {
+                success = appendSimpleToken(&l, SlToken_LessThan);
+            }
         } else if (isdigit(ch)) {
             success = appendNumber(&l);
         } else if (isalpha(ch) || ch == '_') {
             success = appendIdent(&l);
         } else {
-            if (isprint(ch)) {
-                setError(&l, "invalid character %c", ch);
-            } else {
-                setError(&l, "invalid byte 0x%02x", ch);
-            }
-            success = false;
+            goto badCharFound;
         }
+        goto skipBadChar;
+    badCharFound:
+        if (isprint(ch)) {
+            setError(&l, "invalid character %c", ch);
+        } else {
+            setError(&l, "invalid byte 0x%02x", ch);
+        }
+        success = false;
 
+    skipBadChar:
         if (!success) {
             tokensClear(&l.tokens);
             memFree(l.strs);
@@ -193,6 +236,13 @@ static void setError(const LexerState *l, const char *fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
     slSetError(l->vm, "%s:%"PRIu32": %s", l->path, l->line, buf);
+}
+
+static uint8_t peekNext(const LexerState *l) {
+    if (l->pos + 1 < l->len) {
+        return l->text[l->pos + 1];
+    }
+    return 0;
 }
 
 static bool appendToken(LexerState *l, SlToken token) {
