@@ -2,7 +2,6 @@
 #define SL_PARSER_H_
 
 #include <stdint.h>
-#include "sl_lexer.h"
 #include "sl_vm.h"
 #include "sl_hashmap.h"
 
@@ -12,14 +11,16 @@ typedef enum SlNodeKind {
     SlNode_Block,
     SlNode_VarDeclr,
     SlNode_IfStmnt,
+    SlNode_Print,
+    SlNode_RetStmnt,
+
     SlNode_BinOp,
     SlNode_NumInt,
     SlNode_BoolLit,
     SlNode_NullLit,
     SlNode_Access,
-    SlNode_Print,
-    SlNode_Lambda,
-    SlNode_RetStmnt
+    SlNode_Assign,
+    SlNode_Lambda
 } SlNodeKind;
 
 typedef enum SlBinOp {
@@ -53,6 +54,11 @@ typedef struct SlNode {
             SlStrIdx name;
             bool local;
         } access;
+        struct {
+            SlStrIdx name;
+            SlNodeIdx value;
+            bool local;
+        } assign;
         struct {
             SlNodeIdx *nodes;
             SlStrMap *vars;

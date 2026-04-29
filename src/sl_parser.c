@@ -14,24 +14,6 @@
 slArrayType(SlNode, Nodes, nodes)
 slArrayImpl(SlNode, Nodes, nodes)
 
-/*
-1) Variable creation
-
-When a variable is created it is added to the top frame of `vars`, with a value
-of `funcLevel`.
-
-2) Variable access
-
-When accessing a variable the value is updated if the current level is larger
-than the old one.
-
-3) Blocks
-
-When a block is opened a new frame is added on top of `vars` and when the block
-is closed all variables with a higher funcLevel are added to an array of shared
-variables.
-*/
-
 typedef struct VarTable {
     struct VarTable *parent;
     SlStrMap *vars;
@@ -70,6 +52,8 @@ SlNodeIdx addLambda(
 static SlToken token(const ParserState *p);
 // Get the current token and advance to the next
 static SlToken next(ParserState *p);
+// Get the token n tokens ahead, if n is too big just return EOF
+static SlToken ahead(ParserState *p, uint32_t n);
 // Get the current token and raise an error if it is not of kind `kind`
 static bool expect(const ParserState *p, SlTokenKind kind);
 // Same as `expect` but advance after the check
@@ -85,6 +69,7 @@ static SlNodeIdx parsePrint(ParserState *p);
 static SlNodeIdx parseBlock(ParserState *p);
 static SlNodeIdx parseRetStmnt(ParserState *p);
 static SlNodeIdx parseIfStmnt(ParserState *p);
+static SlNodeIdx parseAssign(ParserState *p);
 static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseAdd(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
@@ -101,6 +86,7 @@ static void printNumInt(SlNode node, uint32_t indent);
 static void printBoolLit(SlNode node, uint32_t indent);
 static void printNullLit(uint32_t indent);
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent);
+static void printAssign(SlNode node, const SlAst *ast, uint32_t indent);
 static void printPrint(SlNode node, const SlAst *ast, uint32_t indent);
 static void printRetStmnt(SlNode node, const SlAst *ast, uint32_t indent);
 static void printLambda(SlNode node, const SlAst *ast, uint32_t indent);
@@ -123,6 +109,12 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
     case SlNode_IfStmnt:
         printIfStmnt(node, ast, indent);
         break;
+    case SlNode_Print:
+        printPrint(node, ast, indent);
+        break;
+    case SlNode_RetStmnt:
+        printRetStmnt(node, ast, indent);
+        break;
     case SlNode_BinOp:
         printBinOp(node, ast, indent);
         break;
@@ -138,15 +130,12 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
     case SlNode_Access:
         printAccess(node, ast, indent);
         break;
-    case SlNode_Print:
-        printPrint(node, ast, indent);
+    case SlNode_Assign:
+        printAssign(node, ast, indent);
         break;
     case SlNode_Lambda:
         printLambda(node, ast, indent);
         break;
-    case SlNode_RetStmnt:
-        printRetStmnt(node, ast, indent);
-            break;
     case SlNode_INVALID:
         assert(false && "invalid node when printing");
     }
@@ -261,6 +250,16 @@ static void printAccess(SlNode node, const SlAst *ast, uint32_t indent) {
         S_Arg(node.as.access.name, ast->strs),
         node.as.access.local ? "local" : "nonlocal"
     );
+}
+
+static void printAssign(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf(
+        "%*s"S_Fmt" (%s) =\n",
+        indent * INDENT_WIDTH, "",
+        S_Arg(node.as.assign.name, ast->strs),
+        node.as.assign.local ? "local" : "nonlocal"
+    );
+    printNode(node.as.assign.value, ast, indent + 1);
 }
 
 static void printPrint(SlNode node, const SlAst *ast, uint32_t indent) {
@@ -438,6 +437,15 @@ SlToken next(ParserState *p) {
     return p->tokens.tokens[p->idx++];
 }
 
+static SlToken ahead(ParserState *p, uint32_t n) {
+    uint32_t idx = p->idx + n;
+    if (idx >= p->tokens.tokenCount) {
+        idx = p->tokens.tokenCount - 1;
+    }
+
+    return p->tokens.tokens[idx];
+}
+
 bool expect(const ParserState *p, SlTokenKind kind) {
     if (token(p).kind != kind) {
         setError(
@@ -512,6 +520,11 @@ SlNodeIdx parseStatement(ParserState *p) {
         return parseRetStmnt(p);
     case SlToken_KwIf:
         return parseIfStmnt(p);
+    case SlToken_Ident: {
+        SlNodeIdx idx = parseAssign(p);
+        if (idx == -1 || !expectNext(p, SlToken_Semicolon)) return -1;
+        return idx;
+    }
     default:
         setError(
             p,
@@ -714,6 +727,26 @@ end:
     });
 }
 
+static SlNodeIdx parseAssign(ParserState *p) {
+    SlStrIdx name = token(p).as.ident;
+    uint32_t line = next(p).line;
+
+    if (!expectNext(p, SlToken_Equals)) return -1;
+
+    SlNodeIdx value = parseExpr(p);
+    if (value == -1) return -1;
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_Assign,
+        .line = line,
+        .as.assign = {
+            .name = name,
+            .value = value,
+            .local = true // actually set in resolveVars
+        }
+    });
+}
+
 static SlNodeIdx parsePrint(ParserState *p) {
     uint32_t line = next(p).line;
     SlNodeIdx expr = parseExpr(p);
@@ -731,6 +764,10 @@ static SlNodeIdx parsePrint(ParserState *p) {
 }
 
 static SlNodeIdx parseExpr(ParserState *p) {
+    if (token(p).kind == SlToken_Ident && ahead(p, 1).kind == SlToken_Equals) {
+        return parseAssign(p);
+    }
+
     SlNodeIdx lhs = parseAdd(p);
     if (lhs == -1) {
         return -1;
@@ -989,6 +1026,22 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
             return false;
         case Ref_nonlocal:
             node->as.access.local = false;
+            // fallthrough
+        case Ref_local:
+            return true;
+        }
+    case SlNode_Assign:
+        if (!resolveVars(p, node->as.assign.value)) return false;
+        switch (refVar(p, node->as.assign.name)) {
+        case Ref_failed:
+            setErrorWLine(
+                p,
+                node->line,
+                "unknown variable '"S_Fmt"'",
+                S_Arg(node->as.access.name, p->tokens.strs)
+            );
+        case Ref_nonlocal:
+            node->as.assign.local = false;
             // fallthrough
         case Ref_local:
             return true;

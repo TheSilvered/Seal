@@ -95,6 +95,7 @@ static void genNumInt(GenState *g, SlNodeIdx idx);
 static void genBoolLit(GenState *g, SlNodeIdx idx);
 static void genNullLit(GenState *g, SlNodeIdx idx);
 static void genAccess(GenState *g, SlNodeIdx idx);
+static void genAssign(GenState *g, SlNodeIdx idx);
 
 void printPrototype(SlObj main);
 
@@ -328,6 +329,9 @@ static bool genStmnt(GenState *g, SlNodeIdx idx) {
     case SlNode_RetStmnt:
         genRetStmnt(g, idx);
         break;
+    case SlNode_Assign:
+        genAssign(g, idx);
+        break;
     }
     // When a statement ends, the number of slots used after is the same as the
     // number of slots used before (since variables are pre-allocated)
@@ -523,6 +527,9 @@ static bool genExpr(GenState *g, SlNodeIdx idx) {
     case SlNode_Lambda:
         genLambda(g, idx, (SlStrIdx){ 0 });
         break;
+    case SlNode_Assign:
+        genAssign(g, idx);
+        break;
     case SlNode_INVALID:
     case SlNode_Block:
     case SlNode_VarDeclr:
@@ -707,6 +714,35 @@ static void genAccess(GenState *g, SlNodeIdx idx) {
         emitRegAbs(g, varSlot);
     } else {
         g->outReg = varSlot;
+    }
+}
+
+static void genAssign(GenState *g, SlNodeIdx idx) {
+    bool fromShared;
+    int16_t varSlot;
+
+    SlStrIdx name = getNode(g, idx)->as.assign.name;
+    bool local = getNode(g, idx)->as.assign.local;
+    SlNodeIdx value = getNode(g, idx)->as.assign.value;
+    if (!findVar(g->vm, g->func, name, !local, &varSlot, &fromShared)) return;
+
+    if (fromShared) {
+        // genExpr uses and sets g->outReg correctly
+        if (!genExpr(g, value)) return;
+        emitOp(g, SlOp_sts);
+        emitRegAbs(g, varSlot);
+        emitRegAbs(g, g->outReg);
+    } else if (g->outReg >= 0) {
+        int16_t oldOutReg = g->outReg;
+        g->outReg = varSlot;
+        if (!genExpr(g, value)) return;
+        g->outReg = oldOutReg;
+        emitOp(g, SlOp_cpy);
+        emitRegAbs(g, g->outReg);
+        emitRegAbs(g, varSlot);
+    } else {
+        g->outReg = varSlot;
+        genExpr(g, value);
     }
 }
 
