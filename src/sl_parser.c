@@ -65,9 +65,14 @@ SlNodeIdx addLambda(
     SlStrMap *params,
     SlNodeIdx innerBody
 );
+
+// Get the current token
 static SlToken token(const ParserState *p);
+// Get the current token and advance to the next
 static SlToken next(ParserState *p);
+// Get the current token and raise an error if it is not of kind `kind`
 static bool expect(const ParserState *p, SlTokenKind kind);
+// Same as `expect` but advance after the check
 static bool expectNext(ParserState *p, SlTokenKind kind);
 
 static bool addVar(const ParserState *p, SlStrIdx name);
@@ -93,6 +98,8 @@ static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent);
 static void printIfStmnt(SlNode node, const SlAst *ast, uint32_t indent);
 static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
 static void printNumInt(SlNode node, uint32_t indent);
+static void printBoolLit(SlNode node, uint32_t indent);
+static void printNullLit(uint32_t indent);
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent);
 static void printPrint(SlNode node, const SlAst *ast, uint32_t indent);
 static void printRetStmnt(SlNode node, const SlAst *ast, uint32_t indent);
@@ -121,6 +128,12 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
         break;
     case SlNode_NumInt:
         printNumInt(node, indent);
+        break;
+    case SlNode_BoolLit:
+        printBoolLit(node, indent);
+        break;
+    case SlNode_NullLit:
+        printNullLit(indent);
         break;
     case SlNode_Access:
         printAccess(node, ast, indent);
@@ -227,6 +240,18 @@ static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent) {
 
 static void printNumInt(SlNode node, uint32_t indent) {
     printf("%*s%"PRIi64" (int)\n", indent * INDENT_WIDTH, "", node.as.numInt);
+}
+
+static void printBoolLit(SlNode node, uint32_t indent) {
+    printf(
+        "%*s%s (bool)\n",
+        indent * INDENT_WIDTH, "",
+        node.as.boolLit ? "true" : "false"
+    );
+}
+
+static void printNullLit(uint32_t indent) {
+    printf("%*snull (null)\n", indent * INDENT_WIDTH, "");
 }
 
 static void printAccess(SlNode node, const SlAst *ast, uint32_t indent) {
@@ -571,8 +596,10 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
         return false;
     }
 
+    p->funcLevel++;
     SlNodeIdx body = parseBlock(p);
     if (body == -1) goto error;
+    p->funcLevel--;
 
     SlNodeIdx lambda = addLambda(p, line, params, body);
     if (lambda == -1) return -1;
@@ -627,6 +654,11 @@ error:
 }
 
 static SlNodeIdx parseRetStmnt(ParserState *p) {
+    if (p->funcLevel == 0) {
+        setError(p, "'return' statement outside of a function");
+        return -1;
+    }
+
     uint32_t line = next(p).line;
     SlNodeIdx expr = -1;
     if (token(p).kind != SlToken_Semicolon) {
@@ -860,6 +892,23 @@ static SlNodeIdx parseValue(ParserState *p) {
             }
         });
     }
+    case SlToken_KwTrue:
+        return addNode(p, (SlNode){
+            .kind = SlNode_BoolLit,
+            .line = next(p).line,
+            .as.boolLit = true
+        });
+    case SlToken_KwFalse:
+        return addNode(p, (SlNode){
+            .kind = SlNode_BoolLit,
+            .line = next(p).line,
+            .as.boolLit = false
+        });
+    case SlToken_KwNull:
+        return addNode(p, (SlNode){
+            .kind = SlNode_NullLit,
+            .line = next(p).line
+        });
     default:
         setError(
             p,
@@ -925,6 +974,8 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
         return resolveVars(p, node->as.binOp.lhs)
             && resolveVars(p, node->as.binOp.rhs);
     case SlNode_NumInt:
+    case SlNode_BoolLit:
+    case SlNode_NullLit:
         return true;
     case SlNode_Access:
         switch (refVar(p, node->as.access.name)) {

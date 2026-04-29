@@ -36,6 +36,9 @@ typedef enum SlTokenKind {
     SlToken_KwReturn,
     SlToken_KwIf,
     SlToken_KwElse,
+    SlToken_KwTrue,
+    SlToken_KwFalse,
+    SlToken_KwNull,
     SlToken_KwPrint,
 
     SlToken_Eof

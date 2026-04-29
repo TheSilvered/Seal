@@ -36,6 +36,9 @@ static const struct {
     { "return", SlToken_KwReturn },
     { "if", SlToken_KwIf },
     { "else", SlToken_KwElse },
+    { "true", SlToken_KwTrue },
+    { "false", SlToken_KwFalse },
+    { "null", SlToken_KwNull },
     { "print", SlToken_KwPrint }
 };
 static const size_t keywordsLen = sizeof(keywords) / sizeof(*keywords);
@@ -106,6 +109,12 @@ const char *slTokenKindToStr(SlTokenKind kind) {
         return "the keyword 'if'";
     case SlToken_KwElse:
         return "the keyword 'else'";
+    case SlToken_KwTrue:
+        return "the keyword 'true'";
+    case SlToken_KwFalse:
+        return "the keyword 'false'";
+    case SlToken_KwNull:
+        return "the keyword 'null'";
     case SlToken_KwPrint:
         return "the keyword 'print'";
     case SlToken_Eof:

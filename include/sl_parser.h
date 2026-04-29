@@ -14,6 +14,8 @@ typedef enum SlNodeKind {
     SlNode_IfStmnt,
     SlNode_BinOp,
     SlNode_NumInt,
+    SlNode_BoolLit,
+    SlNode_NullLit,
     SlNode_Access,
     SlNode_Print,
     SlNode_Lambda,
@@ -27,7 +29,6 @@ typedef enum SlBinOp {
     SlBinOp_Div,
     SlBinOp_Mod,
     SlBinOp_Pow,
-
 
     SlBinOp_Lt, // NOTE: keep in sync with isOpJumpable in codegen
     SlBinOp_Le,
@@ -79,6 +80,7 @@ typedef struct SlNode {
         SlNodeIdx retStmnt;
         SlNodeIdx print;
         int64_t numInt;
+        bool boolLit;
     } as;
 } SlNode;
 

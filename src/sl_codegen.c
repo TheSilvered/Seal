@@ -92,6 +92,8 @@ static bool genExpr(GenState *g, SlNodeIdx idx);
 static void genLambda(GenState *g, SlNodeIdx idx, SlStrIdx name);
 static void genBinOp(GenState *g, SlNodeIdx idx);
 static void genNumInt(GenState *g, SlNodeIdx idx);
+static void genBoolLit(GenState *g, SlNodeIdx idx);
+static void genNullLit(GenState *g, SlNodeIdx idx);
 static void genAccess(GenState *g, SlNodeIdx idx);
 
 void printPrototype(SlObj main);
@@ -305,6 +307,8 @@ static bool genStmnt(GenState *g, SlNodeIdx idx) {
     case SlNode_INVALID:
     case SlNode_BinOp:
     case SlNode_NumInt:
+    case SlNode_BoolLit:
+    case SlNode_NullLit:
     case SlNode_Access:
     case SlNode_Lambda:
         assert(false && "unreachable");
@@ -510,6 +514,12 @@ static bool genExpr(GenState *g, SlNodeIdx idx) {
     case SlNode_NumInt:
         genNumInt(g, idx);
         break;
+    case SlNode_BoolLit:
+        genBoolLit(g, idx);
+        break;
+    case SlNode_NullLit:
+        genNullLit(g, idx);
+        break;
     case SlNode_Lambda:
         genLambda(g, idx, (SlStrIdx){ 0 });
         break;
@@ -615,6 +625,23 @@ static void genNumInt(GenState *g, SlNodeIdx idx) {
     }
 }
 
+static void genBoolLit(GenState *g, SlNodeIdx idx) {
+    if (!useOutRegNew(g, idx)) return;
+    if (getNode(g, idx)->as.boolLit) {
+        emitOp(g, SlOp_ltr);
+    } else {
+        emitOp(g, SlOp_lfl);
+    }
+    emitRegAbs(g, g->outReg);
+}
+
+static void genNullLit(GenState *g, SlNodeIdx idx) {
+    if (!useOutRegNew(g, idx)) return;
+    emitOp(g, SlOp_ln);
+    emitRegAbs(g, g->outReg);
+    emitRegAbs(g, g->outReg);
+}
+
 static bool findVar(
     SlVM *vm,
     FuncState *f,
@@ -699,6 +726,14 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
         case SlOp_ln:
             printf("\tln");
             fmt = "rr";
+            break;
+        case SlOp_ltr:
+            printf("\tltr");
+            fmt = "r";
+            break;
+        case SlOp_lfl:
+            printf("\tlfl");
+            fmt = "r";
             break;
         case SlOp_li8:
             printf("\tli8");
