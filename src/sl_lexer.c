@@ -36,6 +36,7 @@ static const struct {
     { "return", SlToken_KwReturn },
     { "if", SlToken_KwIf },
     { "else", SlToken_KwElse },
+    { "while", SlToken_KwWhile },
     { "true", SlToken_KwTrue },
     { "false", SlToken_KwFalse },
     { "null", SlToken_KwNull },
@@ -109,6 +110,8 @@ const char *slTokenKindToStr(SlTokenKind kind) {
         return "the keyword 'if'";
     case SlToken_KwElse:
         return "the keyword 'else'";
+    case SlToken_KwWhile:
+        return "the keyword 'while'";
     case SlToken_KwTrue:
         return "the keyword 'true'";
     case SlToken_KwFalse:

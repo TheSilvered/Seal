@@ -69,6 +69,7 @@ static SlNodeIdx parsePrint(ParserState *p);
 static SlNodeIdx parseBlock(ParserState *p);
 static SlNodeIdx parseRetStmnt(ParserState *p);
 static SlNodeIdx parseIfStmnt(ParserState *p);
+static SlNodeIdx parseWhileLoop(ParserState *p);
 static SlNodeIdx parseAssign(ParserState *p);
 static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseAdd(ParserState *p);
@@ -81,6 +82,7 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent);
 static void printBlock(SlNode node, const SlAst *ast, uint32_t indent);
 static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent);
 static void printIfStmnt(SlNode node, const SlAst *ast, uint32_t indent);
+static void printWhileLoop(SlNode node, const SlAst *ast, uint32_t indent);
 static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent);
 static void printNumInt(SlNode node, uint32_t indent);
 static void printBoolLit(SlNode node, uint32_t indent);
@@ -108,6 +110,9 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
         break;
     case SlNode_IfStmnt:
         printIfStmnt(node, ast, indent);
+        break;
+    case SlNode_WhileLoop:
+        printWhileLoop(node, ast, indent);
         break;
     case SlNode_Print:
         printPrint(node, ast, indent);
@@ -173,13 +178,20 @@ static void printVarDeclr(SlNode node, const SlAst *ast, uint32_t indent) {
 static void printIfStmnt(SlNode node, const SlAst *ast, uint32_t indent) {
     printf("%*sif:\n", indent * INDENT_WIDTH, "");
     printNode(node.as.ifStmnt.condition, ast, indent + 1);
-    printf("%*sifTrue:\n", indent * INDENT_WIDTH, "");
+    printf("%*s(ifTrue):\n", indent * INDENT_WIDTH, "");
     printNode(node.as.ifStmnt.ifTrue, ast, indent + 1);
 
     if (node.as.ifStmnt.ifFalse == -1) return;
 
-    printf("%*sifFalse:\n", indent * INDENT_WIDTH, "");
+    printf("%*s(ifFalse):\n", indent * INDENT_WIDTH, "");
     printNode(node.as.ifStmnt.ifFalse, ast, indent + 1);
+}
+
+static void printWhileLoop(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf("%*swhile:\n", indent * INDENT_WIDTH, "");
+    printNode(node.as.whileLoop.condition, ast, indent + 1);
+    printf("%*s(body):\n", indent * INDENT_WIDTH, "");
+    printNode(node.as.whileLoop.body, ast, indent + 1);
 }
 
 static void printBinOp(SlNode node, const SlAst *ast, uint32_t indent) {
@@ -520,6 +532,8 @@ SlNodeIdx parseStatement(ParserState *p) {
         return parseRetStmnt(p);
     case SlToken_KwIf:
         return parseIfStmnt(p);
+    case SlToken_KwWhile:
+        return parseWhileLoop(p);
     case SlToken_Ident: {
         SlNodeIdx idx = parseAssign(p);
         if (idx == -1 || !expectNext(p, SlToken_Semicolon)) return -1;
@@ -727,6 +741,23 @@ end:
     });
 }
 
+static SlNodeIdx parseWhileLoop(ParserState *p) {
+    uint32_t line = next(p).line;
+    SlNodeIdx condition = parseExpr(p);
+    if (condition == -1) return -1;
+    SlNodeIdx body = parseBlock(p);
+    if (body == -1) return -1;
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_WhileLoop,
+        .line = line,
+        .as.whileLoop = {
+            .condition = condition,
+            .body = body
+        }
+    });
+}
+
 static SlNodeIdx parseAssign(ParserState *p) {
     SlStrIdx name = token(p).as.ident;
     uint32_t line = next(p).line;
@@ -785,7 +816,7 @@ static SlNodeIdx parseExpr(ParserState *p) {
         if (rhs == -1) {
             return -1;
         }
-        SlBinOp op;
+        SlBinOp op = SlBinOp_Add;
         switch (kind) {
         case SlToken_DoubleEquals:      op = SlBinOp_Eq; break;
         case SlToken_BangEquals:        op = SlBinOp_Ne; break;
@@ -861,7 +892,7 @@ static SlNodeIdx parseMul(ParserState *p) {
         if (rhs == -1) {
             return -1;
         }
-        SlBinOp op;
+        SlBinOp op = SlBinOp_Mul;
         switch (kind) {
         case SlToken_Star:
             op = SlBinOp_Mul;
@@ -1007,6 +1038,9 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
             return false;
         }
         return true;
+    case SlNode_WhileLoop:
+        return resolveVars(p, node->as.whileLoop.condition)
+            && resolveVars(p, node->as.whileLoop.body);
     case SlNode_BinOp:
         return resolveVars(p, node->as.binOp.lhs)
             && resolveVars(p, node->as.binOp.rhs);

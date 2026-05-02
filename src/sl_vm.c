@@ -41,7 +41,7 @@ SlSource *slSourceFromFile(SlVM *vm, const char *path) {
         );
         goto exit;
     }
-    if (fileSize > UINT32_MAX) {
+    if ((uint64_t)fileSize > UINT32_MAX) {
         slSetError(vm, "file too big %.1024s, maximum size is 4GiB", path);
         goto exit;
     }

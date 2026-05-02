@@ -11,6 +11,7 @@ typedef enum SlNodeKind {
     SlNode_Block,
     SlNode_VarDeclr,
     SlNode_IfStmnt,
+    SlNode_WhileLoop,
     SlNode_Print,
     SlNode_RetStmnt,
 
@@ -83,6 +84,10 @@ typedef struct SlNode {
             SlNodeIdx ifTrue;
             SlNodeIdx ifFalse;
         } ifStmnt;
+        struct {
+            SlNodeIdx condition;
+            SlNodeIdx body;
+        } whileLoop;
         SlNodeIdx retStmnt;
         SlNodeIdx print;
         int64_t numInt;

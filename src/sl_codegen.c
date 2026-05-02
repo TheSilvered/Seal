@@ -44,7 +44,7 @@ typedef struct GenState {
 static void emitU8(const GenState *g, uint8_t n);
 static void emitI8(const GenState *g, int8_t n);
 static void emitU16(const GenState *g, uint16_t n);
-// static void emitI24(const GenState *g, int32_t n);
+static void emitI24(const GenState *g, int32_t n);
 static void emitU24(const GenState *g, int32_t n);
 static void emitOp(const GenState *g, SlOpCode opCode);
 // Use absolute register
@@ -83,6 +83,7 @@ static bool genStmnt(GenState *g, SlNodeIdx idx);
 static void genBlock(GenState *g, SlNodeIdx idx);
 static void genVarDeclr(GenState *g, SlNodeIdx idx);
 static void genIfStmnt(GenState *g, SlNodeIdx idx);
+static void genWhileLoop(GenState *g, SlNodeIdx idx);
 static void genPrint(GenState *g, SlNodeIdx idx);
 static void genRetStmnt(GenState *g, SlNodeIdx idx);
 
@@ -145,10 +146,10 @@ static void emitU24(const GenState *g, int32_t n) {
     emitU8(g, (n >>  0) & 0xff);
 }
 
-// static void emitI24(const GenState *g, int32_t n) {
-//     assert(n < 0x800000 && n >= -0x800000);
-//     emitU24(g, n);
-// }
+static void emitI24(const GenState *g, int32_t n) {
+    assert(n < 0x800000 && n >= -0x800000);
+    emitU24(g, n);
+}
 
 static void emitOp(const GenState *g, SlOpCode opCode) {
     emitU8(g, (uint8_t)opCode);
@@ -323,6 +324,9 @@ static bool genStmnt(GenState *g, SlNodeIdx idx) {
     case SlNode_IfStmnt:
         genIfStmnt(g, idx);
         break;
+    case SlNode_WhileLoop:
+        genWhileLoop(g, idx);
+        break;
     case SlNode_Print:
         genPrint(g, idx);
         break;
@@ -439,6 +443,19 @@ static void genIfStmnt(GenState *g, SlNodeIdx idx) {
     }
 }
 
+static void genWhileLoop(GenState *g, SlNodeIdx idx) {
+    uint32_t condStart = getPos(g);
+    if (!genExpr(g, getNode(g, idx)->as.whileLoop.condition)) return;
+    emitOp(g, SlOp_jfl);
+    emitRegAbs(g, g->outReg);
+    uint32_t toBodyEnd = placeholderI24(g);
+    uint32_t bodyStart = getPos(g);
+    if (!genStmnt(g, getNode(g, idx)->as.whileLoop.body)) return;
+    emitOp(g, SlOp_jmp);
+    emitI24(g, (int32_t)(condStart - getPos(g) - 3));
+    substituteI24(g, toBodyEnd, (int32_t)(getPos(g) - bodyStart));
+}
+
 static void genPrint(GenState *g, SlNodeIdx idx) {
     if (!genExpr(g, getNode(g, idx)->as.print)) return;
     emitOp(g, SlOp_print);
@@ -534,6 +551,7 @@ static bool genExpr(GenState *g, SlNodeIdx idx) {
     case SlNode_Block:
     case SlNode_VarDeclr:
     case SlNode_IfStmnt:
+    case SlNode_WhileLoop:
     case SlNode_Print:
     case SlNode_RetStmnt:
         assert(false && "unreachable");
@@ -659,6 +677,7 @@ static bool findVar(
 ) {
     assert(f != NULL);
     uint32_t *info = NULL;
+    *outFromShared = false;
 
     // First check the local variables
     if (!nonlocal) {
@@ -942,17 +961,24 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
                 );
                 i += 3;
                 break;
-            case 'I':
+            case 'I': {
+                int32_t num = (
+                    (bytecode[i] << 24)
+                    + (bytecode[i + 1] << 16)
+                    + (bytecode[i + 2] << 8)
+                ) >> 8;
                 printf(
-                   "\t%d",
-                   (bytecode[i] << 16) + (bytecode[i + 1] << 8) + bytecode[i + 2]
+                    "\t%"PRId32,
+                    num
                 );
                 i += 3;
                 break;
+            }
             case 'D':
+                int32_t num = ((bytecode[i] << 24) + (bytecode[i + 1] << 16) + (bytecode[i + 2] << 8)) >> 8;
                 printf(
-                   "\t[%d]",
-                   i + 3 + (bytecode[i] << 16) + (bytecode[i + 1] << 8) + bytecode[i + 2]
+                   "\t[%"PRId32"]",
+                   i + 3 + num
                 );
                 i += 3;
                 break;

@@ -75,6 +75,20 @@ while j < 10 {
     j += 1;
 }
 
+# Infinite loop
+
+loop {
+    print(something);
+}
+
+# Do-While loop
+
+var j = 0;
+loop {
+    print(j);
+    j += 1;
+} while j < 10;
+
 # Value literals:
 
 # Integer
@@ -114,7 +128,8 @@ false;
 ["a": 1, null: 2, .field: "hello"];
 
 # Anonymus function
-|a, b| { print(a + b); }
+|a, b| { return a + b; }
+|a, b| a + b; # Implicit return
 
 # List indexing
 a[0] = "First item";
@@ -126,19 +141,15 @@ print(a.field); # Note: equivalent to a["field"]
 a["weird key"] = 3;
 a.field = "?";
 
-# Pseudo-methods
-## The syntax
-map:method(arg);
-## Is exactly equivalent to
-map.method(map, arg);
-map["method"](map, arg);
+# When calling a field, the map is automatically passed as the first argument
+a.field(); # Equivalent to a["field"](a)
+a.field(arg1, arg2); # Equivalent to a["field"](a, arg1, arg2)
+(a.field)(); # Equivalent to a["field"]()
+(a.field)(arg1, arg2); # Equivalent to a["field"](arg1, arg2)
 
-# More calling syntax
-## Writing
-value::function();
-## Is equivalent to
-function(value);
-
-## This means that this is a valid hello world
-"Hello, world!"::print();
+# Pseudo methods
+# The first argument of any function can be written before the function name
+arg:func(); # Equivalent to func(arg)
+arg:func; # The parentheses are optional
+arg:func1:func2; # Equivalent to func2(func1(arg))
 ```
