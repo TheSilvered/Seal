@@ -19,7 +19,7 @@ typedef enum SlOpCode {
     SlOp_ln,  // from.r to.r; load nulls: for i in from..=to { stack[i] = null; }
     SlOp_ltr, // dst.r; load true: stack[dst] = true
     SlOp_lfl, // dst.r; load false: stack[dst] = false
-    SlOp_li8, // dst.r val.B; load int8_t: stack[dst] = int(val)
+    SlOp_lb,  // dst.r val.B; load signed byte: stack[dst] = int(val)
     SlOp_lkb, // dst.r src.b; load constant by byte:  stack[dst] = constants[src]
     SlOp_lks, // dst.r src.s; load constant by short: stack[dst] = constants[src]
     SlOp_lki, // dst.r src.i; load constant by short: stack[dst] = constants[src]

@@ -21,7 +21,8 @@ typedef enum SlNodeKind {
     SlNode_NullLit,
     SlNode_Access,
     SlNode_Assign,
-    SlNode_Lambda
+    SlNode_Lambda,
+    SlNode_FuncCall
 } SlNodeKind;
 
 typedef enum SlBinOp {
@@ -88,6 +89,10 @@ typedef struct SlNode {
             SlNodeIdx condition;
             SlNodeIdx body;
         } whileLoop;
+        struct {
+            SlNodeIdx *nodes; // The first node is the function
+            uint32_t nodeCount;
+        } funcCall;
         SlNodeIdx retStmnt;
         SlNodeIdx print;
         int64_t numInt;

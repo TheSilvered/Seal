@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -75,6 +76,7 @@ static SlNodeIdx parseExpr(ParserState *p);
 static SlNodeIdx parseAdd(ParserState *p);
 static SlNodeIdx parseMul(ParserState *p);
 static SlNodeIdx parseValue(ParserState *p);
+static SlNodeIdx parseFuncCall(ParserState *p);
 
 static bool resolveVars(ParserState *p, SlNodeIdx idx);
 
@@ -92,6 +94,7 @@ static void printAssign(SlNode node, const SlAst *ast, uint32_t indent);
 static void printPrint(SlNode node, const SlAst *ast, uint32_t indent);
 static void printRetStmnt(SlNode node, const SlAst *ast, uint32_t indent);
 static void printLambda(SlNode node, const SlAst *ast, uint32_t indent);
+static void printFuncCall(SlNode node, const SlAst *ast, uint32_t indent);
 
 void slPrintAst(const SlAst *ast) {
     printNode(ast->root, ast, 0);
@@ -140,6 +143,9 @@ static void printNode(SlNodeIdx idx, const SlAst *ast, uint32_t indent) {
         break;
     case SlNode_Lambda:
         printLambda(node, ast, indent);
+        break;
+    case SlNode_FuncCall:
+        printFuncCall(node, ast, indent);
         break;
     case SlNode_INVALID:
         assert(false && "invalid node when printing");
@@ -289,12 +295,27 @@ static void printLambda(SlNode node, const SlAst *ast, uint32_t indent) {
     printNode(node.as.lambda.body, ast, indent + 1);
 }
 
+static void printFuncCall(SlNode node, const SlAst *ast, uint32_t indent) {
+    printf("%*sfunc call\n", indent * INDENT_WIDTH, "");
+    for (uint32_t i = 0; i < node.as.funcCall.nodeCount; i++) {
+        if (i == 0) {
+            printf("%*s(func)\n", indent * INDENT_WIDTH, "");
+        } else {
+            printf("%*s(arg %"PRIu32")\n", indent * INDENT_WIDTH, "", i - 1);
+        }
+        printNode(node.as.funcCall.nodes[i], ast, indent + 1);
+    }
+}
+
 static void destroyNode(SlNode node) {
     switch (node.kind) {
     case SlNode_Block:
         memFree(node.as.block.nodes);
         slStrMapClear(node.as.block.vars);
         memFree(node.as.block.vars);
+        break;
+    case SlNode_FuncCall:
+        memFree(node.as.funcCall.nodes);
         break;
     default:
         // Nothing to free
@@ -365,7 +386,7 @@ SlAst slParse(SlVM *vm, const SlSource *source) {
 static void setError(const ParserState *p, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    char buf[64];
+    char buf[512];
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
@@ -534,18 +555,22 @@ SlNodeIdx parseStatement(ParserState *p) {
         return parseIfStmnt(p);
     case SlToken_KwWhile:
         return parseWhileLoop(p);
-    case SlToken_Ident: {
-        SlNodeIdx idx = parseAssign(p);
-        if (idx == -1 || !expectNext(p, SlToken_Semicolon)) return -1;
-        return idx;
+    default: {
+        SlNodeIdx expr = parseExpr(p);
+        if (expr == -1) return -1;
+        if (!expectNext(p, SlToken_Semicolon)) return -1;
+        SlNodeKind exprKind = nodesAt(&p->nodes, expr)->kind;
+        if (exprKind != SlNode_FuncCall && exprKind != SlNode_Assign) {
+            setError(
+                p,
+                "expected a statement, the only expressions allowed as "
+                "statements are assignments and function calls",
+                slTokenKindToStr(token(p).kind)
+            );
+            return -1;
+        }
+        return expr;
     }
-    default:
-        setError(
-            p,
-            "expected a statement, found %s instead",
-            slTokenKindToStr(token(p).kind)
-        );
-        return -1;
     }
 }
 
@@ -624,7 +649,7 @@ static SlNodeIdx parseFuncDeclr(ParserState *p) {
     }
 
     p->funcLevel++;
-    SlNodeIdx body = parseBlock(p);
+    SlNodeIdx body = parseStatement(p);
     if (body == -1) goto error;
     p->funcLevel--;
 
@@ -745,6 +770,7 @@ static SlNodeIdx parseWhileLoop(ParserState *p) {
     uint32_t line = next(p).line;
     SlNodeIdx condition = parseExpr(p);
     if (condition == -1) return -1;
+    if (!expect(p, SlToken_LeftCurly)) return -1;
     SlNodeIdx body = parseBlock(p);
     if (body == -1) return -1;
 
@@ -877,7 +903,7 @@ static SlNodeIdx parseAdd(ParserState *p) {
 }
 
 static SlNodeIdx parseMul(ParserState *p) {
-    SlNodeIdx lhs = parseValue(p);
+    SlNodeIdx lhs = parseFuncCall(p);
     if (lhs == -1) {
         return -1;
     }
@@ -888,7 +914,7 @@ static SlNodeIdx parseMul(ParserState *p) {
         kind = token(p).kind
     ) {
         uint32_t line = next(p).line;
-        SlNodeIdx rhs = parseValue(p);
+        SlNodeIdx rhs = parseFuncCall(p);
         if (rhs == -1) {
             return -1;
         }
@@ -926,9 +952,52 @@ static SlNodeIdx parseMul(ParserState *p) {
     return lhs;
 }
 
+static SlNodeIdx parseFuncCall(ParserState *p) {
+    SlNodeIdx value = parseValue(p);
+    if (value == -1) return -1;
+    if (token(p).kind != SlToken_LeftParen) return value;
+    next(p);
+
+    SlI32Arr nodes = { 0 };
+    if (!slI32Push(p->vm, &nodes, value)) return -1;
+
+    while (token(p).kind != SlToken_RightParen) {
+        SlNodeIdx arg = parseExpr(p);
+        if (arg == -1) goto error;
+        if (!slI32Push(p->vm, &nodes, arg)) goto error;
+
+        if (
+            token(p).kind != SlToken_Comma
+            && token(p).kind != SlToken_RightParen
+        ) {
+            setError(
+                p,
+                "expected ',' or ')' but found %s instead",
+                slTokenKindToStr(token(p).kind)
+            );
+            goto error;
+        }
+        if (token(p).kind == SlToken_Comma) next(p);
+    }
+    next(p);
+
+    return addNode(p, (SlNode){
+        .kind = SlNode_FuncCall,
+        .line = nodesAt(&p->nodes, value)->line,
+        .as.funcCall = {
+            .nodes = nodes.data,
+            .nodeCount = nodes.len
+        }
+    });
+error:
+    slI32Clear(&nodes);
+    return -1;
+}
+
 static SlNodeIdx parseValue(ParserState *p) {
     switch (token(p).kind) {
     case SlToken_LeftParen: {
+        next(p);
         SlNodeIdx node = parseExpr(p);
         if (node == -1) {
             return -1;
@@ -1090,6 +1159,11 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
         p->funcLevel--;
         return true;
     }
+    case SlNode_FuncCall:
+        for (uint32_t i = 0; i < node->as.funcCall.nodeCount; i++) {
+            if (!resolveVars(p, node->as.funcCall.nodes[i])) return false;
+        }
+        return true;
     case SlNode_RetStmnt:
         return node->as.retStmnt == -1
             ? true

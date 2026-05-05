@@ -97,6 +97,7 @@ static void genBoolLit(GenState *g, SlNodeIdx idx);
 static void genNullLit(GenState *g, SlNodeIdx idx);
 static void genAccess(GenState *g, SlNodeIdx idx);
 static void genAssign(GenState *g, SlNodeIdx idx);
+static void genFuncCall(GenState *g, SlNodeIdx idx);
 
 void printPrototype(SlObj main);
 
@@ -336,6 +337,9 @@ static bool genStmnt(GenState *g, SlNodeIdx idx) {
     case SlNode_Assign:
         genAssign(g, idx);
         break;
+    case SlNode_FuncCall:
+        genFuncCall(g, idx);
+        break;
     }
     // When a statement ends, the number of slots used after is the same as the
     // number of slots used before (since variables are pre-allocated)
@@ -444,10 +448,12 @@ static void genIfStmnt(GenState *g, SlNodeIdx idx) {
 }
 
 static void genWhileLoop(GenState *g, SlNodeIdx idx) {
+    uint16_t condSlot = getSlot(g);
     uint32_t condStart = getPos(g);
     if (!genExpr(g, getNode(g, idx)->as.whileLoop.condition)) return;
     emitOp(g, SlOp_jfl);
     emitRegAbs(g, g->outReg);
+    releaseSlots(g, condSlot);
     uint32_t toBodyEnd = placeholderI24(g);
     uint32_t bodyStart = getPos(g);
     if (!genStmnt(g, getNode(g, idx)->as.whileLoop.body)) return;
@@ -547,6 +553,9 @@ static bool genExpr(GenState *g, SlNodeIdx idx) {
     case SlNode_Assign:
         genAssign(g, idx);
         break;
+    case SlNode_FuncCall:
+        genFuncCall(g, idx);
+        break;
     case SlNode_INVALID:
     case SlNode_Block:
     case SlNode_VarDeclr:
@@ -640,7 +649,7 @@ static void genNumInt(GenState *g, SlNodeIdx idx) {
     int64_t num = getNode(g, idx)->as.numInt;
     if (!useOutRegNew(g, idx)) return;
     if (num > -128 && num < 127) {
-        emitOp(g, SlOp_li8);
+        emitOp(g, SlOp_lb);
         emitRegAbs(g, g->outReg);
         emitI8(g, (int8_t)num);
     } else {
@@ -765,6 +774,33 @@ static void genAssign(GenState *g, SlNodeIdx idx) {
     }
 }
 
+static void genFuncCall(GenState *g, SlNodeIdx idx) {
+    SlNode node = *getNode(g, idx);
+    int16_t outReg = g->outReg;
+    uint16_t firstSlot = getSlot(g);
+    for (uint32_t i = 0; i < node.as.funcCall.nodeCount; i++) {
+        g->outReg = getSlot(g);
+        if (!useSlots(g, idx, 1)) return;
+        if (!genExpr(g, node.as.funcCall.nodes[i])) return;
+    }
+
+    assert(getSlot(g) == firstSlot + node.as.funcCall.nodeCount);
+
+    emitOp(g, SlOp_call);
+    emitRegAbs(g, firstSlot);
+    emitRegAbs(g, getSlot(g) - 1);
+
+    if (outReg == -1) {
+        g->outReg = firstSlot;
+        releaseSlots(g, firstSlot + 1);
+    } else {
+        emitOp(g, SlOp_cpy);
+        emitRegAbs(g, outReg);
+        emitRegAbs(g, firstSlot);
+        releaseSlots(g, firstSlot);
+    }
+}
+
 // BYTECODE PRINTING
 
 static void printBytecode(const uint8_t *bytecode, uint32_t len) {
@@ -790,8 +826,8 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
             printf("\tlfl");
             fmt = "r";
             break;
-        case SlOp_li8:
-            printf("\tli8");
+        case SlOp_lb:
+            printf("\tlb");
             fmt = "rB";
             break;
         case SlOp_lkb:
@@ -974,7 +1010,7 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
                 i += 3;
                 break;
             }
-            case 'D':
+            case 'D': {
                 int32_t num = ((bytecode[i] << 24) + (bytecode[i + 1] << 16) + (bytecode[i + 2] << 8)) >> 8;
                 printf(
                    "\t[%"PRId32"]",
@@ -982,6 +1018,7 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
                 );
                 i += 3;
                 break;
+            }
             default:
                 printf("Bad format: '%s'", fmt);
                 return;
