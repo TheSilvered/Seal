@@ -45,7 +45,7 @@ SlSource *slSourceFromFile(SlVM *vm, const char *path) {
         slSetError(vm, "file too big %.1024s, maximum size is 4GiB", path);
         goto exit;
     }
-    assert(fseek(f, 0, SEEK_SET) == 0);
+    fseek(f, 0, SEEK_SET);
 
     ret = memAllocBytes(sizeof(*ret) + fileSize);
     if (ret == NULL) {
@@ -144,6 +144,7 @@ SlObj slPrototypeNew(
     SlSharedInfo *sharedInfo,
     uint16_t sharedCount,
     uint16_t frameSize,
+    uint16_t argCount,
     SlDebugInfo *debugInfo
 ) {
     SlPrototype *proto = memAllocBytes(sizeof(*proto));
@@ -167,9 +168,65 @@ SlObj slPrototypeNew(
     proto->sharedInfo = sharedInfo;
     proto->sharedCount = sharedCount;
     proto->frameSize = frameSize;
+    proto->paramCount = argCount;
     proto->debugInfo = debugInfo;
 
     return (SlObj){ .type = SlObj_Prototype, .as.proto = proto };
+}
+
+SlObj slSimpleFuncNew(SlVM *vm, SlObj prototype) {
+    assert(prototype.type == SlObj_Prototype);
+    assert(
+        prototype.as.proto->sharedCount == 0
+        && "slSimpleFuncNew: prototype captures variables"
+    );
+
+    SlFunc *func = memAllocBytes(sizeof(*func));
+
+    if (func == NULL) {
+        slSetOutOfMemoryError(vm);
+        slDelRef(prototype);
+        return slNull;
+    }
+
+    func->asGCObj.refCount = 1;
+    func->proto = prototype.as.proto;
+
+    return (SlObj){ .type = SlObj_Func, .as.func = func };
+}
+
+SlObj slClosureFuncNew(SlVM *vm, SlObj prototype) {
+    assert(prototype.type == SlObj_Prototype);
+    SlFunc *func = memAllocBytes(
+        sizeof(*func)
+        + prototype.as.proto->sharedCount * sizeof(*func->sharedSlots)
+    );
+
+    if (func == NULL) {
+        slSetOutOfMemoryError(vm);
+        slDelRef(prototype);
+        return slNull;
+    }
+
+    func->asGCObj.refCount = 1;
+    func->proto = prototype.as.proto;
+
+    return (SlObj){ .type = SlObj_Func, .as.func = func };
+}
+
+SlObj slSharedSlotNew(SlVM *vm, SlObj *value) {
+    SlSharedSlot *sharedSlot = memAllocBytes(sizeof(*sharedSlot));
+
+    if (sharedSlot == NULL) {
+        slSetOutOfMemoryError(vm);
+        return slNull;
+    }
+
+    sharedSlot->asGCObj.refCount = 1;
+    sharedSlot->value = value;
+    sharedSlot->valCopy = (SlObj){ .type = SlObj_Empty };
+
+    return (SlObj){ .type = SlObj_SharedSlot, .as.sharedSlot = sharedSlot };
 }
 
 SlObj slNewRef(SlObj obj) {
@@ -194,8 +251,6 @@ const char *slTypeName(SlObj o) {
         return "Null";
     case SlObj_Empty:
         return "<internal:Empty>";
-    case SlObj_StackIdx:
-        return "<internal:StackIdx>";
     case SlObj_Bool:
         return "Bool";
     case SlObj_Int:
@@ -256,8 +311,6 @@ static void destroyObj(SlObj o) {
     case SlObj_Bool:
     case SlObj_Int:
     case SlObj_Float:
-    case SlObj_StackIdx:
-        break;
     case SlObj_Str:
         if (o.as.str->cap != 0) {
             memFree(o.as.str->bytes);
@@ -321,7 +374,9 @@ static void destroyObj(SlObj o) {
         break;
     case SlObj_SharedSlot:
         o.as.gcObj->refCount = SIZE_MAX;
-        slDelRef(o.as.sharedSlot->value);
+        // If it has not been copied, it is set to be an empty object which is
+        // not tracked
+        slDelRef(o.as.sharedSlot->valCopy);
         memFree(o.as.sharedSlot);
         break;
 

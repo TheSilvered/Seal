@@ -15,7 +15,7 @@ add_library(seal
     src/sl_array.c
     src/sl_builtin.c
     src/sl_codegen.c
-    # src/sl_exec.c
+    src/sl_exec.c
     src/sl_hashmap.c
     src/sl_lexer.c
     src/sl_parser.c

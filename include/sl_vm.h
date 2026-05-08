@@ -15,7 +15,6 @@ typedef enum SlObjType {
 
     SlObj_Null,
     SlObj_Empty, // internal (undefined value)
-    SlObj_StackIdx, // internal (an index on the stack)
     SlObj_Bool,
     SlObj_Int,
     SlObj_Float,
@@ -147,15 +146,17 @@ struct SlPrototype {
     uint32_t size;
     uint32_t constCount;
     SlObj *constants;
-    SlDebugInfo *debugInfo;
-    uint16_t frameSize;
-    uint16_t sharedCount;
     SlSharedInfo *sharedInfo;
+    uint16_t sharedCount;
+    uint16_t frameSize;
+    uint16_t paramCount;
+    SlDebugInfo *debugInfo;
 };
 
 struct SlSharedSlot {
     SlGCObj asGCObj;
-    SlObj value;
+    SlObj *value; // Either points to the stack or to valCopy
+    SlObj valCopy;
 };
 
 typedef struct SlSource {
@@ -174,6 +175,7 @@ typedef struct SlCallFrame {
     SlFunc *func;
     uint64_t pc;
     SlObj *retAddress;
+    SlObj *stackTop;
 } SlCallFrame;
 
 #define slCallStackCap 32
@@ -192,15 +194,19 @@ typedef struct SlCallStack {
 // Seal virtual machine, init with `SlVM vm = { 0 };`
 typedef struct SlVM {
     struct {
-        bool occurred;
-        char msg[512];
-    } error;
-    SlMethodTable *mtTop;
-    SlStackBlock *stackTop;
-    SlCallStack callStack;
-    uint64_t pc;
-    SlPrototype *bytecode;
-    SlObj *stackPtr;
+        bool occurred; // If there is an error
+        char msg[512]; // Error message, only valid if occurred == true
+    } error; // Last error occurred
+    SlMethodTable *mtTop; // TBD
+    SlStackBlock *stackTop; // Runtime value stack
+    SlCallStack callStack; // Runtime call stack
+    uint64_t pc; // Program counter
+    struct {
+        uint8_t *bytes; // Bytecode
+        SlObj *consts; // Constants
+        SlObj *stack; // Pointer to the first value of the stack frame
+        SlSharedSlot **shared; // Shared slots
+    } curr; // More direct values for the current frame
 } SlVM;
 
 // Create a source from a C string. No memory is allocated.
@@ -241,7 +247,7 @@ SlObj slFrozenStrFmt(SlVM *vm, const char *fmt, ...);
 // Create a new function prototype object.
 // Ownership of bytes, constants, sharedInfo and debugInfo is transferred to
 // the new object.
-// If an error occurs return NULL.
+// If an error occurs return slNull.
 SlObj slPrototypeNew(
     SlVM *vm,
     uint8_t *bytes,
@@ -251,8 +257,22 @@ SlObj slPrototypeNew(
     SlSharedInfo *sharedInfo,
     uint16_t sharedCount,
     uint16_t frameSize,
+    uint16_t paramCount,
     SlDebugInfo *debugInfo
 );
+
+// Create a function that does not capture variables from its environment.
+// The reference to the prototype is always taken to be transferred to the new
+// object, even on error.
+// If an error occurs return slNull.
+SlObj slSimpleFuncNew(SlVM *vm, SlObj prototype);
+// Create a function that does not capture variables from its environment.
+// The reference to the prototype is always taken to be transferred to the new
+// object, even on error.
+// If an error occurs return slNull.
+SlObj slClosureFuncNew(SlVM *vm, SlObj prototype);
+// Create a shared slot object. The value referenced is just a weak reference.
+SlObj slSharedSlotNew(SlVM *vm, SlObj *value);
 
 // Get a new reference to an object.
 SlObj slNewRef(SlObj o);

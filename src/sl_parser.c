@@ -161,10 +161,10 @@ static void printBlock(SlNode node, const SlAst *ast, uint32_t indent) {
     );
     slMapForeach(node.as.block.vars, SlStrMapBucket, var, i) {
         printf(
-            "%*s- "S_Fmt" @ reg=%"PRIu32", shr=%"PRIi32"\n",
+            "%*s- "S_Fmt" @ reg=%"PRIu16", shr=%"PRIi16"\n",
             indent * INDENT_WIDTH, "",
             S_Arg(var->key, ast->strs),
-            var->value & 0xff, (int32_t)(var->value >> 16) - 1
+            slVarIdx(var->value), slVarShr(var->value)
         );
     }
     for (uint32_t i = 0; i < node.as.block.nodeCount; i++) {
@@ -1073,16 +1073,17 @@ static RefKind refVar(const ParserState *p, SlStrIdx name) {
     VarTable *vt = p->vt;
     while (vt) {
         uint32_t *var = slStrMapGet(vt->vars, name);
-        if (var != NULL) {
-            // If the variable is in an outer function and is not already shared
-            // then add a share index
-            if (vt->funcLevel != funcLevel && *var >> 16 == 0) {
-                *var = ++vt->sharedCount << 16 | *var;
-                return Ref_nonlocal;
-            }
-            return Ref_local;
+        if (var == NULL) {
+            vt = vt->parent;
+            continue;
         }
-        vt = vt->parent;
+        if (vt->funcLevel != funcLevel) {
+            if (*var >> 16 == 0) {
+                *var = ++vt->sharedCount << 16 | *var;
+            }
+            return Ref_nonlocal;
+        }
+        return Ref_local;
     }
     return Ref_failed;
 }

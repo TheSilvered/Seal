@@ -19,7 +19,7 @@ SlObj slAdd(SlVM *vm, SlObj a, SlObj b){
     } else {
         slSetError(
             vm,
-            "%s + %s not supported",
+            "%s + %s is not supported",
             slTypeName(a), slTypeName(b)
         );
         return slNull;

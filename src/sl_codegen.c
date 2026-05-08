@@ -31,6 +31,9 @@ typedef struct FuncState {
     uint16_t usedStack;
     uint16_t maxStackSize;
     BlockState *block;
+    #define isShrVarFromShared(info) ((bool)(info >> 31))
+    #define shrVarSrc(info) ((uint16_t)(info >> 16) & 0x7f)
+    #define shrVarDst(info) ((uint16_t)(info & 0x7f))
 } FuncState;
 
 typedef struct GenState {
@@ -115,15 +118,23 @@ SlObj slGenCode(SlVM *vm, const SlSource *source) {
         .func = NULL
     };
 
-    SlObj main = genProtoObj(&g, ast.root, (SlStrIdx){ .idx = 0, .len = 0 });
+    SlObj mainProto = genProtoObj(&g, ast.root, (SlStrIdx){ .idx = 0, .len = 0 });
     slDestroyAst(&ast);
-    if (main.type == SlObj_Prototype && main.as.proto->debugInfo != NULL) {
-        main.as.proto->debugInfo->name = (uint8_t *)".main";
+    if (
+        mainProto.type == SlObj_Prototype
+        && mainProto.as.proto->debugInfo != NULL
+    ) {
+        mainProto.as.proto->debugInfo->name = (uint8_t *)".main";
+    } else if (mainProto.type == SlObj_Null) {
+        return slNull;
     }
-    if (main.type != SlObj_Null)
-        printPrototype(main);
 
-    return main;
+    char *printBytecode = getenv("SL_PRINT_BC");
+    if (printBytecode && strcmp(printBytecode, "true") == 0) {
+        printPrototype(mainProto);
+    }
+
+    return slSimpleFuncNew(vm, mainProto);
 }
 
 static void emitU8(const GenState *g, uint8_t n) {
@@ -404,8 +415,8 @@ static void genVarDeclr(GenState *g, SlNodeIdx idx) {
     );
     assert(varInfo != NULL);
 
-    uint16_t slotIdx = *varInfo & 0xff;
-    int16_t shrIdx = (int16_t)((*varInfo >> 16) - 1);
+    uint16_t slotIdx = slVarIdx(*varInfo);
+    int16_t shrIdx = slVarShr(*varInfo);
 
     int16_t oldOutReg = setOutRegRel(g, (int16_t)slotIdx);
 
@@ -524,6 +535,7 @@ static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name) {
         sharedInfo,
         newTop.externalVars.len,
         newTop.maxStackSize,
+        g->ast.nodes[idx].as.lambda.paramCount,
         NULL
     );
 }
@@ -570,7 +582,9 @@ static bool genExpr(GenState *g, SlNodeIdx idx) {
 }
 
 static void genLambda(GenState *g, SlNodeIdx idx, SlStrIdx name) {
+    uint16_t outReg = g->outReg;
     SlObj lambda = genProtoObj(g, idx, name);
+    g->outReg = outReg;
     if (lambda.type == SlObj_Null) return;
     int32_t constIdx = addConst(g, idx, lambda);
     if (constIdx < 0) {
@@ -676,91 +690,89 @@ static void genNullLit(GenState *g, SlNodeIdx idx) {
     emitRegAbs(g, g->outReg);
 }
 
-static bool findVar(
-    SlVM *vm,
-    FuncState *f,
-    SlStrIdx name,
-    bool nonlocal, // if true skip the local variables when searching
-    int16_t *outIdx,
-    bool *outFromShared
-) {
+static int16_t findLocalVar(FuncState *f, SlStrIdx name, uint16_t *outShr) {
     assert(f != NULL);
-    uint32_t *info = NULL;
-    *outFromShared = false;
-
-    // First check the local variables
-    if (!nonlocal) {
-        BlockState *block = f->block;
-        while (block != NULL) {
-            info = slStrMapGet(block->vars, name);
-            if (info != NULL) {
-                *outIdx = (int16_t)((*info & 0xff) + block->baseReg);
-                return true;
-            }
+    BlockState *block = f->block;
+    while (block != NULL) {
+        uint32_t *info = slStrMapGet(block->vars, name);
+        if (info == NULL) {
             block = block->parent;
+            continue;
         }
+        if (outShr) *outShr = slVarShr(*info) + block->baseShr;
+        return (int16_t)slVarIdx(*info) + block->baseReg;
     }
+    return -1;
+}
 
-    *outFromShared = true;
-
-    // Then check the shared values
-    info = slStrMapGet(&f->externalVars, name);
+static int16_t findSharedVar(SlVM *vm, FuncState *f, SlStrIdx name) {
+    assert(f != NULL);
+    uint32_t *info = slStrMapGet(&f->externalVars, name);
     if (info != NULL) {
-        *outIdx = (int16_t)(*info & 0xff);
-        return true;
+        return (int16_t)shrVarDst(*info);
     }
 
-    // Otherwise get the variable from the parent function and add it to the
-    // shared values
-    int16_t idx;
-    bool fromShared;
-    if (!findVar(vm, f->parent, name, false, &idx, &fromShared)) {
-        return false;
+    assert(f->parent != NULL);
+    uint16_t parentShr;
+    bool fromShared = false;
+    if (findLocalVar(f->parent, name, &parentShr) == -1) {
+        fromShared = true;
+        int16_t idx = findSharedVar(vm, f->parent, name);
+        assert(idx != -1);
+        parentShr = (uint16_t)idx;
     }
 
-    *outIdx = (int16_t)f->externalVars.len;
-    uint32_t externalValue = (fromShared << 31) | (idx << 16) | (*outIdx);
-    return slStrMapSet(vm, &f->externalVars, name, externalValue);
+    uint32_t dstIdx = f->externalVars.len;
+    assert((dstIdx & 0x7f) == dstIdx);
+    uint32_t externalValue = (fromShared << 31) | (parentShr << 16) | dstIdx;
+    if (!slStrMapSet(vm, &f->externalVars, name, externalValue)) return -1;
+    return dstIdx;
 }
 
 static void genAccess(GenState *g, SlNodeIdx idx) {
-    bool fromShared;
-    int16_t varSlot;
-
     SlStrIdx name = getNode(g, idx)->as.access.name;
     bool local = getNode(g, idx)->as.access.local;
-    if (!findVar(g->vm, g->func, name, !local, &varSlot, &fromShared)) return;
 
-    if (fromShared) {
-        if (!useOutRegNew(g, idx)) return;
+    int16_t varSlot;
+
+    if (!local) {
+        varSlot = findSharedVar(g->vm, g->func, name);
+        if (varSlot == -1 || !useOutRegNew(g, idx)) return;
         emitOp(g, SlOp_ls);
         emitRegAbs(g, g->outReg);
         emitRegAbs(g, varSlot);
-    } else if (g->outReg >= 0) {
+        return;
+    }
+    varSlot = findLocalVar(g->func, name, NULL);
+    assert(varSlot != -1);
+    if (g->outReg < 0) {
+        g->outReg = varSlot;
+    } else {
         emitOp(g, SlOp_cpy);
         emitRegAbs(g, g->outReg);
         emitRegAbs(g, varSlot);
-    } else {
-        g->outReg = varSlot;
     }
 }
 
 static void genAssign(GenState *g, SlNodeIdx idx) {
-    bool fromShared;
     int16_t varSlot;
 
     SlStrIdx name = getNode(g, idx)->as.assign.name;
     bool local = getNode(g, idx)->as.assign.local;
     SlNodeIdx value = getNode(g, idx)->as.assign.value;
-    if (!findVar(g->vm, g->func, name, !local, &varSlot, &fromShared)) return;
 
-    if (fromShared) {
-        // genExpr uses and sets g->outReg correctly
-        if (!genExpr(g, value)) return;
+    if (!local) {
+        varSlot = findSharedVar(g->vm, g->func, name);
+        if (varSlot == -1 || !genExpr(g, value)) return;
         emitOp(g, SlOp_sts);
         emitRegAbs(g, varSlot);
         emitRegAbs(g, g->outReg);
-    } else if (g->outReg >= 0) {
+        return;
+    }
+    varSlot = findLocalVar(g->func, name, NULL);
+    assert(varSlot != -1);
+
+    if (g->outReg >= 0) {
         int16_t oldOutReg = g->outReg;
         g->outReg = varSlot;
         if (!genExpr(g, value)) return;
@@ -1011,7 +1023,11 @@ static void printBytecode(const uint8_t *bytecode, uint32_t len) {
                 break;
             }
             case 'D': {
-                int32_t num = ((bytecode[i] << 24) + (bytecode[i + 1] << 16) + (bytecode[i + 2] << 8)) >> 8;
+                int32_t num = (
+                    (bytecode[i] << 24)
+                    + (bytecode[i + 1] << 16)
+                    + (bytecode[i + 2] << 8)
+                ) >> 8;
                 printf(
                    "\t[%"PRId32"]",
                    i + 3 + num
@@ -1039,6 +1055,20 @@ void printPrototype(SlObj main) {
         SlPrototype *proto = toPrint.data[i].as.proto;
         printf("<%p> bytecode:\n", (void *)proto);
         printBytecode(proto->bytes, proto->size);
+        if (proto->sharedCount == 0) goto printConstants;
+
+        printf("----shared info:\n");
+        for (uint32_t j = 0; j < proto->sharedCount; j++) {
+            SlSharedInfo info = proto->sharedInfo[j];
+            printf(
+                "\t[%u] %"PRIu16" (%s)\n",
+                j,
+                info.idx,
+                info.fromShared ? "shr" : "stack"
+            );
+        }
+
+    printConstants:
         if (proto->constCount == 0) continue;
         printf("----constants:\n");
         for (uint32_t j = 0; j < proto->constCount; j++) {

@@ -1,7 +1,12 @@
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
 #include "sl_builtin.h"
 #include "sl_codegen.h"
 #include "sl_exec.h"
 #include "clib_mem.h"
+#include "sl_vm.h"
 
 #define _blockMinCapacity 512 // 8 KiB blocks
 
@@ -18,30 +23,81 @@ static SlCallFrame *topFrame(SlVM *vm);
 // Remove a frame from the call stack.
 static void popFrame(SlVM *vm);
 
-static bool callFunc(SlVM *vm, SlObj func, SlObj *retAddress);
-static bool exeFunc(SlVM *vm);
 static inline uint16_t decodeReg(SlVM *vm);
-static inline uint32_t decodeU32(SlVM *vm);
+static inline uint8_t decodeU8(SlVM *vm);
+static inline int8_t decodeI8(SlVM *vm);
+static inline uint16_t decodeU16(SlVM *vm);
+static inline uint32_t decodeU24(SlVM *vm);
+static inline int32_t decodeI24(SlVM *vm);
 // Set the value of a stack slot, a reference is taken from obj
 static inline void setSlot(SlVM *vm, uint16_t reg, SlObj obj);
 
-SlObj slRun(SlVM *vm, SlObj mainFunc) {
-    SlObj res = slNull;
-    callFunc(vm, mainFunc, &res);
+// Reset the virtual machine to run something new
+static bool resetRuntime(SlVM *vm, SlObj mainFunc, SlObj *retAddr);
 
-    exeFunc(vm);
+static bool finishFunc(SlVM *vm);
+
+SlObj slRun(SlVM *vm, SlObj mainFunc) {
+    if (mainFunc.type != SlObj_Func) {
+        slSetError(vm, "slRun: 'mainFunc' is not a function");
+        return slNull;
+    }
+    if (mainFunc.as.func->proto->paramCount != 0) {
+        slSetError(vm, "slRun: 'mainFunc' cannot accept arguments");
+        return slNull;
+    }
+    if (mainFunc.as.func->proto->sharedCount != 0) {
+        slSetError(vm, "slRun: 'mainFunc' cannot capture any variables");
+        return slNull;
+    }
+
+    SlObj res = slNull;
+    resetRuntime(vm, mainFunc, &res);
+
+    finishFunc(vm);
 
     return res;
 }
 
-static SlObj *pushSlots(SlVM *vm, uint16_t count) {
-    assert(count != 0);
+static bool resetRuntime(SlVM *vm, SlObj mainFunc, SlObj *retAddr) {
+    // Reset the call stack
+    while (vm->callStack.top != NULL) {
+        SlCallStackBlock *oldTop = vm->callStack.top;
+        vm->callStack.top = oldTop->prev;
+        memFree(oldTop);
+    }
+    vm->callStack.totalUsed = 0;
 
+    // Reset the value stack
+    while (vm->stackTop != NULL) {
+        popSlots(vm, vm->stackTop->used); // Properly release the references
+        SlStackBlock *oldTop = vm->stackTop;
+        vm->stackTop = oldTop->prev;
+        memFree(oldTop);
+    }
+
+    vm->error.occurred = false;
+    vm->pc = 0;
+    vm->curr.bytes = mainFunc.as.func->proto->bytes;
+    vm->curr.stack = pushSlots(vm, mainFunc.as.func->proto->frameSize);
+    vm->curr.shared = &mainFunc.as.func->sharedSlots[0];
+    vm->curr.consts = mainFunc.as.func->proto->constants;
+    if (vm->curr.stack == NULL) return false;
+
+    SlCallFrame *frame = pushFrame(vm);
+    if (frame == NULL) return false;
+    frame->pc = 0;
+    frame->func = mainFunc.as.func;
+    frame->retAddress = retAddr;
+    return true;
+}
+
+static SlObj *pushSlots(SlVM *vm, uint16_t count) {
     SlStackBlock *top = vm->stackTop;
     if (top == NULL || top->cap - top->used < count) {
         uint16_t newCap = count > _blockMinCapacity ? count : _blockMinCapacity;
         top = memAllocZeroedBytes(
-            sizeof(*top) + (newCap - 1) * sizeof(*top->slots)
+            sizeof(*top) + newCap * sizeof(*top->slots)
         );
         if (top == NULL) {
             slSetOutOfMemoryError(vm);
@@ -62,14 +118,17 @@ static SlObj *pushSlots(SlVM *vm, uint16_t count) {
 }
 
 static void popSlots(SlVM *vm, uint16_t count) {
-    assert(count != 0);
     assert(vm->stackTop != NULL);
     if (vm->stackTop->used == 0) {
         SlStackBlock *block = vm->stackTop;
         vm->stackTop = block->prev;
         memFree(block);
     }
-    assert(vm->stackTop->used >= count);
+    uint16_t topUsed = vm->stackTop->used;
+    assert(topUsed >= count);
+    for (uint16_t i = 0; i < count; i++) {
+        slDelRef(vm->stackTop->slots[topUsed - i - 1]);
+    }
     vm->stackTop->used -= count;
 }
 
@@ -115,128 +174,336 @@ static void popFrame(SlVM *vm) {
     }
 }
 
-static bool callFunc(SlVM *vm, SlObj func, SlObj *retAddress) {
-    SlCallFrame *frame = pushFrame(vm);
-    if (frame == NULL) {
-        return false;
-    }
-
-    if ((func.type & 0xff) != SlObj_Func) {
-        slSetError(vm, "only functions can be called");
-        return false;
-    }
-
-    frame->pc = vm->pc;
-    frame->func = func.as.func;
-    frame->retAddress = retAddress;
-    vm->bytecode = func.as.func->bytecode;
-    vm->sharedSlots = func.as.func->sharedSlots;
-    vm->pc = 0;
-    vm->stackPtr = pushSlots(vm, vm->bytecode->frameSize);
-    return true;
-}
-
-static bool exeFunc(SlVM *vm) {
-    assert(vm->callStack.totalUsed > 0);
-    uint64_t initialSize = vm->callStack.totalUsed;
-
-    while (vm->callStack.totalUsed >= initialSize) {
-        assert(vm->pc < vm->bytecode->size);
-        uint8_t op = vm->bytecode->bytes[vm->pc++];
-        switch (op) {
-        case SlOp_nop:
-            break;
-        case SlOp_ldnull:
-            setSlot(vm, decodeReg(vm), slNull);
-            break;
-        case SlOp_ldi8: {
-            uint16_t dest = decodeReg(vm);
-            SlObj num = slObjInt((int8_t)vm->bytecode->bytes[vm->pc++]);
-            setSlot(vm, dest, num);
-            break;
-        }
-        case SlOp_cpy: {
-            uint16_t dest, src;
-            dest = decodeReg(vm);
-            src = decodeReg(vm);
-            setSlot(vm, dest, slNewRef(vm->stackPtr[src]));
-        }
-        case SlOp_add: {
-            uint16_t dest, lhs, rhs;
-            dest = decodeReg(vm);
-            lhs = decodeReg(vm);
-            rhs = decodeReg(vm);
-            setSlot(vm, dest, slAdd(vm, vm->stackPtr[lhs], vm->stackPtr[rhs]));
-            goto maybeError;
-        }
-        case SlOp_mul: {
-            uint16_t dest, lhs, rhs;
-            dest = decodeReg(vm);
-            lhs = decodeReg(vm);
-            rhs = decodeReg(vm);
-            setSlot(vm, dest, slMul(vm, vm->stackPtr[lhs], vm->stackPtr[rhs]));
-            goto maybeError;
-        }
-        case SlOp_sub:
-        case SlOp_div:
-        case SlOp_mod:
-        case SlOp_pow: {
-            slSetError(vm, "TODO: implement opcode");
-            goto maybeError;
-        }
-        case SlOp_print: {
-            SlObj str = slToStr(vm, vm->stackPtr[decodeReg(vm)]);
-            if ((str.type & 0xff) != SlObj_Str) {
-                goto maybeError;
-            }
-            printf("%.*s\n", (int)str.as.str->len, (char *)str.as.str->bytes);
-            slDelRef(str);
-            break;
-        }
-        case SlOp_ret: {
-            SlObj retVal = slNewRef(vm->stackPtr[decodeReg(vm)]);
-            SlCallFrame *frame = topFrame(vm);
-            slDelRef(*frame->retAddress);
-            *frame->retAddress = retVal;
-            vm->pc = frame->pc;
-            popFrame(vm);
-            break;
-        }
-        default:
-            assert(false && "unreachable opcode");
-            return false;
-        }
-
-        continue;
-    maybeError:
-        if (vm->error.occurred) {
-            return false;
-        }
-    }
-    return !vm->error.occurred;
+static inline uint8_t nextByteChecked(SlVM *vm) {
+    assert(vm->pc < topFrame(vm)->func->proto->size);
+    return vm->curr.bytes[vm->pc++];
 }
 
 static inline uint16_t decodeReg(SlVM *vm) {
-    assert(vm->pc < vm->bytecode->size);
-    uint8_t byte0 = vm->bytecode->bytes[vm->pc++];
+    uint8_t byte0 = nextByteChecked(vm);
     if (byte0 <= 0x7f) {
         return byte0;
     }
-    assert(vm->pc < vm->bytecode->size);
-    uint8_t byte1 = vm->bytecode->bytes[vm->pc++];
+    uint8_t byte1 = nextByteChecked(vm);
     return (((byte0 & 0x7f) << 8) | byte1) + 0x7f;
 }
 
-static inline uint32_t decodeU32(SlVM *vm) {
-    uint32_t val = (vm->bytecode->bytes[vm->pc + 0] << 24)
-                 | (vm->bytecode->bytes[vm->pc + 1] << 16)
-                 | (vm->bytecode->bytes[vm->pc + 2] << 8)
-                 | (vm->bytecode->bytes[vm->pc + 3]);
-    vm->pc += 4;
-    return val;
+static inline uint8_t decodeU8(SlVM *vm) {
+    return nextByteChecked(vm);
+}
+
+static inline int8_t decodeI8(SlVM *vm) {
+    return (int8_t)nextByteChecked(vm);
+}
+
+static inline uint16_t decodeU16(SlVM *vm) {
+    uint8_t byte0 = nextByteChecked(vm);
+    uint8_t byte1 = nextByteChecked(vm);
+    return ((uint16_t)byte0 << 8) | byte1;
+}
+
+static inline uint32_t decodeU24(SlVM *vm) {
+    uint8_t byte0 = nextByteChecked(vm);
+    uint8_t byte1 = nextByteChecked(vm);
+    uint8_t byte2 = nextByteChecked(vm);
+
+    return ((uint32_t)byte0 << 16) | ((uint32_t)byte1 << 8) | byte2;
+}
+
+static inline int32_t decodeI24(SlVM *vm) {
+    assert((uint8_t)(-1) == 0xff);
+    uint8_t byte0 = nextByteChecked(vm);
+    uint8_t byte1 = nextByteChecked(vm);
+    uint8_t byte2 = nextByteChecked(vm);
+
+    return (int32_t)(
+        ((uint32_t)(0 - (byte0 >> 7)) << 24)
+        | ((uint32_t)byte0 << 16)
+        | ((uint32_t)byte1 << 8)
+        | byte2
+    );
 }
 
 static inline void setSlot(SlVM *vm, uint16_t reg, SlObj obj) {
-    slDelRef(vm->stackPtr[reg]);
-    vm->stackPtr[reg] = obj;
+    slDelRef(vm->curr.stack[reg]);
+    vm->curr.stack[reg] = obj;
+}
+
+static inline void detachShared(SlObj shared) {
+    assert(shared.type == SlObj_SharedSlot);
+    shared.as.sharedSlot->valCopy = slNewRef(*shared.as.sharedSlot->value);
+}
+
+static inline SlObj makeClosure(SlVM *vm, SlObj prototype) {
+    SlObj func = slClosureFuncNew(vm, prototype);
+    if (func.type == SlObj_Null) return func;
+
+    SlSharedSlot **slots = func.as.func->sharedSlots;
+
+    for (uint32_t i = 0; i < prototype.as.proto->sharedCount; i++) {
+        SlSharedInfo info = prototype.as.proto->sharedInfo[i];
+        if (info.fromShared) {
+            slNewRef((SlObj){
+                .type = SlObj_SharedSlot,
+                .as.sharedSlot = vm->curr.shared[info.idx]
+            });
+            slots[i] = vm->curr.shared[info.idx];
+        } else {
+            assert(vm->curr.stack[info.idx].type == SlObj_SharedSlot);
+            slNewRef(vm->curr.stack[info.idx]);
+            slots[i] = vm->curr.stack[info.idx].as.sharedSlot;
+        }
+    }
+
+    return func;
+}
+
+static bool pushFunc(SlVM *vm, uint16_t first, uint16_t last) {
+    SlObj func = vm->curr.stack[first];
+    if (func.type != SlObj_Func) {
+        slSetError(vm, "cannot call %s object", slTypeName(func));
+        return false;
+    }
+    uint16_t paramCount = last - first;
+    if (paramCount != func.as.func->proto->paramCount) {
+        slSetError(
+            vm,
+            "expected %u arguments but got %u",
+            func.as.func->proto->paramCount,
+            paramCount
+        );
+    }
+
+    SlObj *stackTop = pushSlots(vm, func.as.func->proto->frameSize);
+    if (stackTop == NULL) return false;
+
+    SlCallFrame *frame = pushFrame(vm);
+    if (frame == NULL) return false;
+
+    frame->func = func.as.func;
+    frame->pc = vm->pc;
+    frame->stackTop = vm->curr.stack;
+    frame->retAddress = &vm->curr.stack[first];
+
+    for (uint16_t i = 0; i < paramCount; i++) {
+        stackTop[i] = slNewRef(vm->curr.stack[i + first + 1]);
+    }
+
+    vm->pc = 0;
+    vm->curr.bytes = func.as.func->proto->bytes;
+    vm->curr.consts = func.as.func->proto->constants;
+    vm->curr.stack = stackTop;
+    vm->curr.shared = func.as.func->sharedSlots;
+
+    return true;
+}
+
+static void funcReturn(SlVM *vm, SlObj val) {
+    SlCallFrame *frame = topFrame(vm);
+
+    slDelRef(*frame->retAddress);
+    *frame->retAddress = val;
+
+    vm->pc = frame->pc;
+    vm->curr.stack = frame->stackTop;
+
+    popSlots(vm, frame->func->proto->frameSize);
+    popFrame(vm);
+
+    if (vm->callStack.totalUsed > 0) {
+        frame = topFrame(vm);
+        vm->curr.bytes = frame->func->proto->bytes;
+        vm->curr.consts = frame->func->proto->constants;
+        vm->curr.shared = frame->func->sharedSlots;
+    }
+}
+
+static bool finishFunc(SlVM *vm) {
+    assert(vm->callStack.totalUsed != 0);
+    uint64_t finalStack = vm->callStack.totalUsed - 1;
+
+    while (true) {
+        uint8_t op = nextByteChecked(vm);
+        switch ((SlOpCode)op) {
+        case SlOp_nop:
+            break;
+        case SlOp_ln: {
+            uint16_t first = decodeReg(vm);
+            uint16_t last = decodeReg(vm);
+            for (uint16_t i = first; i <= last; i++) {
+                slDelRef(vm->curr.stack[i]);
+            }
+            // (SlObj){ 0 } is slNull
+            memset(
+                &vm->curr.stack[first],
+                0,
+                (last - first + 1) * sizeof(SlObj)
+            );
+            break;
+        }
+        case SlOp_ltr:
+            setSlot(vm, decodeReg(vm), slTrue);
+            break;
+        case SlOp_lfl:
+            setSlot(vm, decodeReg(vm), slFalse);
+            break;
+        case SlOp_lb: {
+            uint16_t dst = decodeReg(vm);
+            int8_t value = decodeI8(vm);
+            setSlot(vm, dst, slObjInt(value));
+            break;
+        }
+        case SlOp_lkb: {
+            uint16_t dst = decodeReg(vm);
+            uint8_t idx = decodeU8(vm);
+            setSlot(vm, dst, vm->curr.consts[idx]);
+            break;
+        }
+        case SlOp_lks: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t idx = decodeU16(vm);
+            setSlot(vm, dst, vm->curr.consts[idx]);
+            break;
+        }
+        case SlOp_lki: {
+            uint16_t dst = decodeReg(vm);
+            uint32_t idx = decodeU24(vm);
+            setSlot(vm, dst, vm->curr.consts[idx]);
+            break;
+        }
+        case SlOp_cpy: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t src = decodeReg(vm);
+            setSlot(vm, dst, slNewRef(vm->curr.stack[src]));
+            break;
+        }
+        case SlOp_ls: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t idx = decodeReg(vm);
+            SlSharedSlot *shared = vm->curr.shared[idx];
+            setSlot(vm, dst, slNewRef(*shared->value));
+            break;
+        }
+        case SlOp_sts: {
+            uint16_t idx = decodeReg(vm);
+            uint16_t src = decodeReg(vm);
+            SlSharedSlot *shared = vm->curr.shared[idx];
+            SlObj newVal = slNewRef(vm->curr.stack[src]);
+            slDelRef(*shared->value);
+            *shared->value = newVal;
+            break;
+        }
+        case SlOp_mks: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t src = decodeReg(vm);
+            SlObj slot = slSharedSlotNew(vm, &vm->curr.stack[src]);
+            if (slot.type == SlObj_Null) return false;
+            // Only shared slots can replace an attached shared slot since when
+            // compiling the slots are occupied until the block ends and can
+            // only be changed if the variable is shadowed
+            if (vm->curr.stack[dst].type == SlObj_SharedSlot) {
+                detachShared(vm->curr.stack[dst]);
+            }
+            setSlot(vm, dst, slot);
+            break;
+        }
+        case SlOp_dts: {
+            uint16_t first = decodeReg(vm);
+            uint16_t last = decodeReg(vm);
+            for (uint16_t i = first; i <= last; i++) {
+                detachShared(vm->curr.stack[i]);
+            }
+            break;
+        }
+        case SlOp_add: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t lhs = decodeReg(vm);
+            uint16_t rhs = decodeReg(vm);
+
+            SlObj result = slAdd(vm, vm->curr.stack[lhs], vm->curr.stack[rhs]);
+            if (vm->error.occurred) return false;
+            setSlot(vm, dst, result);
+            break;
+        }
+        case SlOp_sub:
+        case SlOp_mul:
+        case SlOp_div:
+        case SlOp_mod:
+        case SlOp_pow:
+        case SlOp_lt:
+        case SlOp_le:
+        case SlOp_eq:
+        case SlOp_ne:
+            assert(false && "TODO: opcode");
+            return false;
+        case SlOp_print: {
+            SlObj val = vm->curr.stack[decodeReg(vm)];
+            SlObj str = slToStr(vm, val);
+            if (str.type == SlObj_Null) return false;
+            printf("%.*s\n", (int)str.as.str->len, str.as.str->bytes);
+            break;
+        }
+        case SlOp_mkfb: {
+            uint16_t dst = decodeReg(vm);
+            uint8_t idx = decodeU8(vm);
+            SlObj func = makeClosure(vm, vm->curr.consts[idx]);
+            if (func.type != SlObj_Func) return false;
+            setSlot(vm, dst, func);
+            break;
+        }
+        case SlOp_mkfs: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t idx = decodeU16(vm);
+            SlObj func = makeClosure(vm, vm->curr.consts[idx]);
+            if (func.type != SlObj_Func) return false;
+            setSlot(vm, dst, func);
+            break;
+        }
+        case SlOp_mkfi: {
+            uint16_t dst = decodeReg(vm);
+            uint32_t idx = decodeU24(vm);
+            SlObj func = makeClosure(vm, vm->curr.consts[idx]);
+            if (func.type != SlObj_Func) return false;
+            setSlot(vm, dst, func);
+            break;
+        }
+        case SlOp_call: {
+            uint16_t first = decodeReg(vm);
+            uint16_t last = decodeReg(vm);
+            if (!pushFunc(vm, first, last)) return false;
+            break;
+        }
+        case SlOp_tcall:
+            assert(false && "TODO: tcall");
+            return false;
+        case SlOp_ret: {
+            SlObj val = vm->curr.stack[decodeReg(vm)];
+            funcReturn(vm, slNewRef(val));
+            if (vm->callStack.totalUsed <= finalStack) {
+                return true;
+            }
+            break;
+        }
+        case SlOp_retnl: {
+            funcReturn(vm, slNull);
+            if (vm->callStack.totalUsed <= finalStack) {
+                return true;
+            }
+            break;
+        }
+        case SlOp_jmp: {
+            int32_t diff = decodeI24(vm);
+            vm->pc += diff;
+            break;
+        }
+        case SlOp_jtr:
+        case SlOp_jfl:
+        case SlOp_jlt:
+        case SlOp_jle:
+        case SlOp_jeq:
+        case SlOp_jne:
+            assert(false && "TODO: cond jmp");
+            return false;
+        }
+    }
 }

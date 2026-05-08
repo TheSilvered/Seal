@@ -17,10 +17,8 @@ int main(int argc, char **argv) {
     checkError(&vm);
     SlObj mainFunc = slGenCode(&vm, src);
     checkError(&vm);
-    /*
     SlObj result = slRun(&vm, mainFunc);
     checkError(&vm);
-    */
 
     return 0;
 }

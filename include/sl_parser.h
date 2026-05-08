@@ -67,6 +67,8 @@ typedef struct SlNode {
             uint16_t funcCount;
             uint16_t sharedCount;
             uint32_t nodeCount;
+            #define slVarIdx(info) ((uint16_t)(info) & 0xff)
+            #define slVarShr(info) ((int16_t)((info) >> 16) - 1)
         } block;
         struct {
             SlNodeIdx lhs, rhs;
