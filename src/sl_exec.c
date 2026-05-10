@@ -425,17 +425,53 @@ static bool finishFunc(SlVM *vm) {
             setSlot(vm, dst, result);
             break;
         }
-        case SlOp_sub:
-        case SlOp_mul:
+        case SlOp_sub: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t lhs = decodeReg(vm);
+            uint16_t rhs = decodeReg(vm);
+
+            SlObj result = slSub(vm, vm->curr.stack[lhs], vm->curr.stack[rhs]);
+            if (vm->error.occurred) return false;
+            setSlot(vm, dst, result);
+            break;
+        }
+        case SlOp_mul: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t lhs = decodeReg(vm);
+            uint16_t rhs = decodeReg(vm);
+
+            SlObj result = slMul(vm, vm->curr.stack[lhs], vm->curr.stack[rhs]);
+            if (vm->error.occurred) return false;
+            setSlot(vm, dst, result);
+            break;
+        }
         case SlOp_div:
         case SlOp_mod:
         case SlOp_pow:
         case SlOp_lt:
         case SlOp_le:
-        case SlOp_eq:
-        case SlOp_ne:
             assert(false && "TODO: opcode");
             return false;
+        case SlOp_eq: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t lhs = decodeReg(vm);
+            uint16_t rhs = decodeReg(vm);
+
+            SlObj result = slEq(vm, vm->curr.stack[lhs], vm->curr.stack[rhs]);
+            if (vm->error.occurred) return false;
+            setSlot(vm, dst, result);
+            break;
+        }
+        case SlOp_ne: {
+            uint16_t dst = decodeReg(vm);
+            uint16_t lhs = decodeReg(vm);
+            uint16_t rhs = decodeReg(vm);
+
+            SlObj result = slNe(vm, vm->curr.stack[lhs], vm->curr.stack[rhs]);
+            if (vm->error.occurred) return false;
+            setSlot(vm, dst, result);
+            break;
+        }
         case SlOp_print: {
             SlObj val = vm->curr.stack[decodeReg(vm)];
             SlObj str = slToStr(vm, val);
@@ -496,8 +532,22 @@ static bool finishFunc(SlVM *vm) {
             vm->pc += diff;
             break;
         }
-        case SlOp_jtr:
-        case SlOp_jfl:
+        case SlOp_jtr: {
+            SlObj cond = vm->curr.stack[decodeReg(vm)];
+            int32_t diff = decodeI24(vm);
+            if (slIsTruthy(cond)) {
+                vm->pc += diff;
+            }
+            break;
+        }
+        case SlOp_jfl: {
+            SlObj cond = vm->curr.stack[decodeReg(vm)];
+            int32_t diff = decodeI24(vm);
+            if (!slIsTruthy(cond)) {
+                vm->pc += diff;
+            }
+            break;
+        }
         case SlOp_jlt:
         case SlOp_jle:
         case SlOp_jeq:

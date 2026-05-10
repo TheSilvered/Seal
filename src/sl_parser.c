@@ -1103,7 +1103,7 @@ static bool resolveVars(ParserState *p, SlNodeIdx idx) {
         if (!resolveVars(p, node->as.ifStmnt.ifTrue)) return false;
         if (
             node->as.ifStmnt.ifFalse != -1
-            && !resolveVars(p, node->as.ifStmnt.condition)
+            && !resolveVars(p, node->as.ifStmnt.ifFalse)
         ){
             return false;
         }
