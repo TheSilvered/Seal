@@ -21,7 +21,8 @@ add_library(seal
     src/sl_parser.c
     src/sl_vm.c
 )
-target_compile_definitions(seal PRIVATE CLIB_MEM_TRACE_ALLOCS _CRT_SECURE_NO_WARNINGS)
+
+target_compile_definitions(seal PRIVATE $<$<CONFIG:Debug>:CLIB_MEM_TRACE_ALLOCS> _CRT_SECURE_NO_WARNINGS)
 if(MSVC)
     target_compile_options(seal PRIVATE /W4 /WX)
 else()

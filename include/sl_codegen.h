@@ -3,60 +3,81 @@
 
 #include "sl_vm.h"
 
-// Argument list:
-// name.format
-// Possible formats are:
-// - r: register-like (1-byte for 0 to 127, two bytes above)
-// - B: signed byte
-// - b: unsigned byte
-// - s: unsigned 16-bit integer (saved in big endian)
-// - I: signed 24-bit integer (saved in big endian)
-// - i: unsigned 24-bit integer (saved in big endian)
+/*
 
+Instruction formats (32 bits):
+
+All registers can be at most two bytes (hence the argument extensions)
+
+ 3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0
+ 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+|0|      r2       |      r1       |      rd       |    op     |x|  (A) Arithmetic
+|       imm       |      r1       |      rd       |    op     |x|  (K) Immediate arithmetic
+|       imm       |              rdx              |    op     |x|  (I) Immediate
+|b|              r1x              |      rd       |    op     |x|  (C) Check op
+|                       immx                      |    op     |0|  (J) Jump
+
+ 6 6 6 6 5 5 5 5 5 5 5 5 5 5 4 4 4 4 4 4 4 4 4 4 3 3 3 3 3 3 3 3
+ 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2
+|0|      r2u      |      r1u      |      rdu      |1 1 1 1 1 1 0|  (A) extension
+|      immu       |      r1u      |      rdu      |1 1 1 1 1 1 0|  (K) extension
+|0 0|                    immux                    |1 1 1 1 1 1 0|  (I) extension
+|0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0|      rdu      |1 1 1 1 1 1 0|  (C) extension
+
+rd = destination register
+r1 = first register
+r2 = second register
+imm = immediate value
+x = use arg extension
+b = boolean (0=false, 1=true)
+
+-u = upper bits
+-x = extended
+*/
+
+// R = register stack
+// K = constants
+// SH = shared values
+// vals = [false, true]
 typedef enum SlOpCode {
-    SlOp_nop, // no operation
+    SlOp_add = 2, // (A) R[rd] = R[r1] + R[r2]
+    SlOp_addi,    // (K) R[rd] = R[r1] + int(imm)
+    SlOp_sub,     // (A) R[rd] = R[r1] - R[r2]
+    SlOp_subi,    // (K) R[rd] = R[r1] - int(imm)
+    SlOp_mul,     // (A) R[rd] = R[r1] * R[r2]
+    SlOp_muli,    // (K) R[rd] = R[r1] * int(imm)
+    SlOp_div,     // (A) R[rd] = R[r1] / R[r2]
+    SlOp_divi,    // (K) R[rd] = R[r1] / int(imm)
+    SlOp_mod,     // (A) R[rd] = R[r1] % R[r2]
+    SlOp_modi,    // (K) R[rd] = R[r1] % int(imm)
+    SlOp_pow,     // (A) R[rd] = R[r1] ^ R[r2]
+    SlOp_powi,    // (K) R[rd] = R[r1] ^ int(imm)
 
-    SlOp_ln,  // from.r to.r; load nulls: for i in from..=to { stack[i] = null; }
-    SlOp_ltr, // dst.r; load true: stack[dst] = true
-    SlOp_lfl, // dst.r; load false: stack[dst] = false
-    SlOp_lb,  // dst.r val.B; load signed byte: stack[dst] = int(val)
-    SlOp_lkb, // dst.r src.b; load constant by byte:  stack[dst] = constants[src]
-    SlOp_lks, // dst.r src.s; load constant by short: stack[dst] = constants[src]
-    SlOp_lki, // dst.r src.i; load constant by short: stack[dst] = constants[src]
-    SlOp_cpy, // dst.r src.r; copy: stack[dst] = stack[src]
-    SlOp_ls,  // dst.r src.r; load shared: stack[dst] = shared[src].value
-    SlOp_sts, // dst.r src.r; store shared: shared[dst].value = stack[src]
-    SlOp_mks, // dst.r src.r; make shared: stack[dst] = sharedSlot(src)
-    SlOp_dts, // from.r to.r; detach shared: for i in from..=to { detach(stack[i]); }
+    SlOp_mov,     // (C) R[rd] = R[r1x]
+    SlOp_ldn,     // (I) for (i = 0; i < uint(imm); i++) R[rdx + i] = null;
+    SlOp_ldi,     // (I) R[rdx] = int(imm)
+    SlOp_ldv,     // (I) R[rdx] = copy(vals[imm])
+    SlOp_ldk,     // (I) R[rdx] = K[imm]
 
-    SlOp_add,  // dst.r lhs.r rhs.r; dst = lhs + rhs
-    SlOp_sub,  // dst.r lhs.r rhs.r; dst = lhs - rhs
-    SlOp_mul,  // dst.r lhs.r rhs.r; dst = lhs * rhs
-    SlOp_div,  // dst.r lhs.r rhs.r; dst = lhs / rhs
-    SlOp_mod,  // dst.r lhs.r rhs.r; dst = lhs % rhs
-    SlOp_pow,  // dst.r lhs.r rhs.r; dst = lhs ^ rhs
-    SlOp_lt,   // dst.r lhs.r rhs.r; dst = lhs < rhs
-    SlOp_le,   // dst.r lhs.r rhs.r; dst = lhs <= rhs
-    SlOp_eq,   // dst.r lhs.r rhs.r; dst = lhs == rhs
-    SlOp_ne,   // dst.r lhs.r rhs.r; dst = lhs != rhs
+    SlOp_ldsh,    // (I) R[rdx] = SH[uint(imm)].value
+    SlOp_stsh,    // (I) SH[uint(imm)].value = R[rdx]
+    SlOp_mksh,    // (C) R[rd] = newShared(r1x)
+    SlOp_dtsh,    // (I) for (i = 0; i < uint(imm); i++) R[rdx + i] = detach(S[rdx + i]);
 
-    SlOp_print,// src.r; print(str(stack[src]) + '\n')
-    SlOp_mkfb, // dst.r func.b; make function: stack[dst] = closure(constants[func])
-    SlOp_mkfs, // dst.r func.s; make function: stack[dst] = closure(constants[func])
-    SlOp_mkfi, // dst.r func.i; make function: stack[dst] = closure(constants[func])
-    SlOp_call, // func.r last.r;
-               // stack[func] = stack[func](stack[func + 1], ..., stack[last])
-    SlOp_tcall,// func.r last.r; perform a tail call, args are the same as SlOp_call
-    SlOp_ret,  // src.r; return src
-    SlOp_retnl,// ; return null
+    SlOp_mkf,     // (I) R[rdx] = newClosure(K[imm])
+    SlOp_call,    // (I) R[rdx] = R[rdx](R[rdx + 1], ..., R[rdx + uint(imm)])
+    SlOp_tcall,   // (I) R[rdx] = R[rdx](R[rdx + 1], ..., R[rdx + uint(imm)])
+    SlOp_ret,     // (C) if (b) return R[r1x]; else return null;
 
-    SlOp_jmp, // diff.I; jump: pc += diff
-    SlOp_jtr, // val.r diff.I; jump if true: if (stack[val]) pc += diff
-    SlOp_jfl, // val.r diff.I; jump if false: if (stack[val]) pc += diff
-    SlOp_jlt, // lhs.r rhs.r diff.I; jump if lhs <  rhs: if (stack[lhs] <  stack[rhs]) pc += diff
-    SlOp_jle, // lhs.r rhs.r diff.I; jump if lhs <= rhs: if (stack[lhs] <= stack[rhs]) pc += diff
-    SlOp_jeq, // lhs.r rhs.r diff.I; jump if lhs == rhs: if (stack[lhs] == stack[rhs]) pc += diff
-    SlOp_jne, // lhs.r rhs.r diff.I; jump if lhs != rhs: if (stack[lhs] != stack[rhs]) pc += diff
+    SlOp_jmp,     // (J) pc += int(immx)
+
+    SlOp_eqj,     // (C) if ((R[rd] == R[r1x]) == b) pc++;
+    SlOp_eqi,     // (C) if ((R[rd] == int(r1x) == b) pc++;
+    SlOp_ltj,     // (C) if ((R[rd] < R[r1x]) == b) pc++;
+    SlOp_lej,     // (C) if ((R[rd] <= R[r1x]) == b) pc++;
+    SlOp_boolj,   // (C) if (R[rd] == b) pc++;
+
+    SlOp_print,   // (C) print(S[r1x]);
 } SlOpCode;
 
 SlObj slGenCode(SlVM *vm, const SlSource *source);

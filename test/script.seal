@@ -8,4 +8,4 @@ func fib(n) {
     }
 }
 
-print fib(7);
+print fib(35);
