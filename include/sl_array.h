@@ -60,6 +60,7 @@
     }
 
 slArrayType(int32_t, SlI32Arr, slI32)
+slArrayType(int32_t, SlU32Arr, slU32)
 slArrayType(uint8_t, SlU8Arr, slU8)
 
 typedef struct SlStrIdx {

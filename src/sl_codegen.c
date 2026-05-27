@@ -25,7 +25,7 @@ typedef struct BlockState {
 
 typedef struct FuncState {
     struct FuncState *parent;
-    SlU8Arr bytecode;
+    SlU32Arr bytecode;
     Constants consts;
     SlStrMap externalVars; // value: [fromShared?:1|src:15|0|dst:15]
     uint16_t usedStack;
@@ -44,24 +44,19 @@ typedef struct GenState {
     int16_t outReg; // always absolute
 } GenState;
 
-static void emitU8(const GenState *g, uint8_t n);
-static void emitI8(const GenState *g, int8_t n);
-static void emitU16(const GenState *g, uint16_t n);
-static void emitI24(const GenState *g, int32_t n);
-static void emitU24(const GenState *g, int32_t n);
-static void emitOp(const GenState *g, SlOpCode opCode);
-// Use absolute register
-static void emitRegAbs(const GenState *g, int16_t reg);
-// Use reg + g->func->block->baseReg
-static void emitRegRel(const GenState *g, uint16_t reg);
-// Emit appropriate op, that loads from the constants with an appropriate
-// integer
-// op - the byte version of the opcode (e.g. SlOp_lkb)
-// src - the index of the constant
-// g->outReg is used as the destination
-static void emitKOp(const GenState *g, SlOpCode op, int32_t src);
-static uint32_t placeholderI24(const GenState *g);
-static void substituteI24(const GenState *g, uint32_t idx, int32_t val);
+static bool emitA(
+    GenState *g,
+    SlOpCode op,
+    uint16_t rd, uint16_t r1, uint16_t r2
+);
+
+static bool emitK(
+    GenState *g,
+    SlOpCode op,
+    uint16_t rd, uint16_t r1, uint16_t imm
+);
+static bool emitI(GenState *g, SlOpCode op, uint16_t rd, uint32_t imm);
+static bool emitC(GenState *g, SlOpCode op, uint16_t rd, uint16_t r1);
 
 static uint32_t getPos(const GenState *g);
 
@@ -137,87 +132,59 @@ SlObj slGenCode(SlVM *vm, const SlSource *source) {
     return slSimpleFuncNew(vm, mainProto);
 }
 
-static void emitU8(const GenState *g, uint8_t n) {
-    assert(g->func != NULL);
-    slU8Push(g->vm, &g->func->bytecode, n);
+static bool emitA(
+    GenState *g,
+    SlOpCode op,
+    uint16_t rd, uint16_t r1, uint16_t r2
+) {
+    bool extended = (rd > 0xff) || (r1 > 0xff) || (r2 > 0xff);
+    uint32_t inst1 =
+          ((r2 & 0xff) << 24)
+        | ((r1 & 0xff) << 16)
+        | ((rd & 0xff) << 8)
+        | (op << 1)
+        | extended;
+
+    if (!slU32Push(g->vm, &g->func->bytecode, inst1)) return false;
+    if (!extended) return true;
+
+    uint32_t inst2 =
+          ((r2 & 0xff00) << 16)
+        | ((r1 & 0xff00) << 8)
+        | ((rd & 0xff00))
+        | 0xfe;
+
+    return slU32Push(g->vm, &g->func->bytecode, inst2);
 }
 
-static void emitI8(const GenState *g, int8_t n) {
-    emitU8(g, (uint8_t)n);
+static bool emitK(
+    GenState *g,
+    SlOpCode op,
+    uint16_t rd, uint16_t r1, uint16_t imm
+) {
+    return emitA(g, op, rd, r1, imm);
 }
 
-static void emitU16(const GenState *g, uint16_t n) {
-    emitU8(g, n >> 8);
-    emitU8(g, n & 0xff);
+static bool emitI(GenState *g, SlOpCode op, uint16_t rd, uint32_t imm) {
+    bool extended = imm > 0xff;
+    uint32_t inst1 = ((imm & 0xff) << 24) | rd | (op << 1) | extended;
+
+    if (!slU32Push(g->vm, &g->func->bytecode, inst1)) return false;
+    if (!extended) return true;
+
+    uint32_t inst2 = (imm << 8) | 0xfe;
+    return slU32Push(g->vm, &g->func->bytecode, inst2);
 }
 
-static void emitU24(const GenState *g, int32_t n) {
-    assert(n < 0x1000000);
-    emitU8(g, (n >> 16) & 0xff);
-    emitU8(g, (n >>  8) & 0xff);
-    emitU8(g, (n >>  0) & 0xff);
-}
+static bool emitC(GenState *g, SlOpCode op, uint16_t rd, uint16_t r1) {
+    bool extended = rd > 0xff;
+    uint32_t inst1 = (r1 << 16) | ((rd & 0xff) << 8) | (op << 1) | extended;
 
-static void emitI24(const GenState *g, int32_t n) {
-    assert(n < 0x800000 && n >= -0x800000);
-    emitU24(g, n);
-}
+    if (!slU32Push(g->vm, &g->func->bytecode, inst1)) return false;
+    if (!extended) return true;
 
-static void emitOp(const GenState *g, SlOpCode opCode) {
-    emitU8(g, (uint8_t)opCode);
-}
-
-static void emitRegRel(const GenState *g, uint16_t reg) {
-    assert(g->func != NULL);
-    assert(g->func->block != NULL);
-    uint16_t baseReg = g->func->block->baseReg;
-
-    assert((uint32_t)reg + (uint32_t)baseReg < 0xffff);
-    emitRegAbs(g, (int16_t)(reg + baseReg));
-}
-
-static void emitRegAbs(const GenState *g, int16_t reg) {
-    assert(reg >= 0 && reg <= _maxReg);
-    if (reg < 0x80) {
-        emitU8(g, (uint8_t)reg);
-    } else {
-        emitU16(g, (reg - 0x80) | 0x8000);
-    }
-}
-
-static void emitKOp(const GenState *g, SlOpCode op, int32_t src) {
-    assert(src <= _maxConst);
-    assert(g->outReg >= 0);
-    if (src <= 0xff) {
-        emitOp(g, op);
-        emitRegAbs(g, g->outReg);
-        emitU8(g, (uint8_t)src);
-    } else if (src <= 0xffff) {
-        emitOp(g, op + 1);
-        emitRegAbs(g, g->outReg);
-        emitU16(g, (uint16_t)src);
-    } else {
-        emitOp(g, op + 2);
-        emitRegAbs(g, g->outReg);
-        emitU24(g, src);
-    }
-}
-
-static uint32_t placeholderI24(const GenState *g) {
-    uint32_t idx = getPos(g);
-    emitU8(g, 0);
-    emitU8(g, 0);
-    emitU8(g, 0);
-    return idx;
-}
-
-static void substituteI24(const GenState *g, uint32_t idx, int32_t val) {
-    assert(g->func != NULL);
-    assert(g->func->bytecode.len > idx + 2);
-
-    g->func->bytecode.data[idx + 0] = val >> 16;
-    g->func->bytecode.data[idx + 1] = (val >> 8) & 0xff;
-    g->func->bytecode.data[idx + 2] = val & 0xff;
+    uint32_t inst2 = (rd & 0xff00) | 0xfe;
+    return slU32Push(g->vm, &g->func->bytecode, inst2);
 }
 
 static uint32_t getPos(const GenState *g) {
