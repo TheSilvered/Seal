@@ -7,12 +7,37 @@
 // There are 0x7fff + 0x80 available registers but the top 128 are reserved
 #define _maxReg 0x7fff
 #define _maxConst 0xffffff
+#define _maxJump 0x7fffff
 #define S_Fmt "%.*s"
 #define S_Arg(str) (int)(str).len, (char *)(g->ast.strs + (str).idx)
-#define isOpJumpable(op) ((op) >= SlBinOp_Lt)
 
 slArrayType(SlObj, Constants, consts)
 slArrayImpl(SlObj, Constants, consts)
+
+enum ValsArr {
+    Vals_false,
+    Vals_true,
+    Vals_null
+};
+
+SlOpCode inverseTest[] = {
+    [SlOp_teq - SlOp_teq]  = SlOp_tne,
+    [SlOp_teqi - SlOp_teq] = SlOp_tnei,
+    [SlOp_tne - SlOp_teq]  = SlOp_teq,
+    [SlOp_tnei - SlOp_teq] = SlOp_teqi,
+    [SlOp_tlt - SlOp_teq]  = SlOp_tge,
+    [SlOp_tlti - SlOp_teq] = SlOp_tgei,
+    [SlOp_tle - SlOp_teq]  = SlOp_tgt,
+    [SlOp_tlei - SlOp_teq] = SlOp_tgti,
+    [SlOp_tgt - SlOp_teq]  = SlOp_tle,
+    [SlOp_tgti - SlOp_teq] = SlOp_tlei,
+    [SlOp_tge - SlOp_teq]  = SlOp_tlt,
+    [SlOp_tgei - SlOp_teq] = SlOp_tlti,
+    [SlOp_ttr - SlOp_teq]  = SlOp_tfl,
+    [SlOp_tfl - SlOp_teq]  = SlOp_ttr,
+    [SlOp_tnl - SlOp_teq]  = SlOp_tnnl,
+    [SlOp_tnnl - SlOp_teq] = SlOp_tnl
+};
 
 // The program tracked as a stack of functions, stored in FuncState
 // Each function has inside its own vars table that is a stack of blocks
@@ -49,7 +74,6 @@ static bool emitA(
     SlOpCode op,
     uint16_t rd, uint16_t r1, uint16_t r2
 );
-
 static bool emitK(
     GenState *g,
     SlOpCode op,
@@ -57,8 +81,14 @@ static bool emitK(
 );
 static bool emitI(GenState *g, SlOpCode op, uint16_t rd, uint32_t imm);
 static bool emitC(GenState *g, SlOpCode op, uint16_t rd, uint16_t r1);
+static bool emitJ(GenState *g, int32_t offset);
+static uint32_t jumpPlaceholder(GenState *g);
+static bool jumpTo(GenState *g, uint32_t placeholder, uint32_t goal);
 
 static uint32_t getPos(const GenState *g);
+// Transform a register relative to the block into an absolute register
+// (relative to the function)
+static uint16_t absReg(const GenState *g, uint16_t relReg);
 
 static void setError(const GenState *g, SlNodeIdx node, const char *fmt, ...);
 
@@ -87,6 +117,7 @@ static void genRetStmnt(GenState *g, SlNodeIdx idx);
 
 // g->outReg contains the register where the value of the expression is stored
 
+static bool genTest(GenState *g, SlNodeIdx idx, bool inverse);
 static bool genExpr(GenState *g, SlNodeIdx idx);
 static void genLambda(GenState *g, SlNodeIdx idx, SlStrIdx name);
 static void genBinOp(GenState *g, SlNodeIdx idx);
@@ -187,9 +218,44 @@ static bool emitC(GenState *g, SlOpCode op, uint16_t rd, uint16_t r1) {
     return slU32Push(g->vm, &g->func->bytecode, inst2);
 }
 
+static bool emitJ(GenState *g, int32_t offset) {
+    return slU32Push(
+        g->vm,
+        &g->func->bytecode,
+        (offset << 8) | (SlOp_jmp << 1)
+    );
+}
+
+static uint32_t jumpPlaceholder(GenState *g) {
+    return slU32Push(g->vm, &g->func->bytecode, SlOp_jmp << 1);
+}
+
+static bool jumpTo(GenState *g, uint32_t placeholder, uint32_t goal) {
+    uint32_t dist = goal > placeholder
+        ? goal - placeholder
+        : placeholder - goal;
+
+    if (dist > _maxJump) {
+        return false;
+    }
+
+    int32_t offset;
+    if (goal > placeholder) {
+        offset = (int32_t)dist - 1;
+    } else {
+        offset = -(int32_t)dist - 1;
+    }
+    g->func->bytecode.data[placeholder] |= (offset << 8);
+    return true;
+}
+
 static uint32_t getPos(const GenState *g) {
     assert(g->func != NULL);
     return g->func->bytecode.len;
+}
+
+static uint16_t absReg(const GenState *g, uint16_t relReg) {
+    return relReg + g->func->block->baseReg;
 }
 
 static void setError(const GenState *g, SlNodeIdx node, const char *fmt, ...) {
@@ -347,17 +413,20 @@ static void genBlock(GenState *g, SlNodeIdx idx) {
     g->func->block = &newBlockState;
 
     if (funcCount != 0) {
-        emitOp(g, SlOp_ln);
-        emitRegRel(g, 0);
-        emitRegRel(g, funcCount - 1);
+        emitI(g, SlOp_ldn, absReg(g, 0), funcCount);
     }
+
+    // Create the shared slots for shared functions
     slMapForeach(node->as.block.vars, SlStrMapBucket, var, i) {
         if (i >= funcCount) goto break_foreach;
         int32_t shrIdx = ((int32_t)var->value >> 16) - 1;
         if (shrIdx == -1) continue;
-        emitOp(g, SlOp_mks);
-        emitRegRel(g, (uint16_t)shrIdx + varCount);
-        emitRegRel(g, (uint16_t)i);
+        emitC(
+            g,
+            SlOp_mksh,
+            absReg(g, (uint16_t)shrIdx + varCount),
+            absReg(g, (uint16_t)i)
+        );
     }
 break_foreach:
 
@@ -366,9 +435,7 @@ break_foreach:
     }
 
     if (sharedCount != 0) {
-        emitOp(g, SlOp_dts);
-        emitRegRel(g, varCount);
-        emitRegRel(g, varCount + sharedCount - 1);
+        emitI(g, SlOp_dtsh, absReg(g, varCount), sharedCount);
     }
     releaseSlots(g, baseReg);
     g->func->block = newBlockState.parent;
@@ -397,9 +464,12 @@ static void genVarDeclr(GenState *g, SlNodeIdx idx) {
 
     g->outReg = oldOutReg;
     if (shrIdx >= 0) {
-        emitOp(g, SlOp_mks);
-        emitRegRel(g, g->func->block->baseShr + shrIdx);
-        emitRegRel(g, slotIdx);
+        emitC(
+            g,
+            SlOp_mksh,
+            absReg(g, g->func->block->baseShr + shrIdx),
+            absReg(g, slotIdx)
+        );
     }
 }
 
@@ -442,18 +512,23 @@ static void genWhileLoop(GenState *g, SlNodeIdx idx) {
 
 static void genPrint(GenState *g, SlNodeIdx idx) {
     if (!genExpr(g, getNode(g, idx)->as.print)) return;
-    emitOp(g, SlOp_print);
-    emitRegAbs(g, g->outReg);
+    emitI(g, SlOp_print, g->outReg, 0);
 }
 
 static void genRetStmnt(GenState *g, SlNodeIdx idx) {
     SlNodeIdx expr = getNode(g, idx)->as.retStmnt;
-    if (expr != -1) {
-        if (!genExpr(g, expr)) return;
-        emitOp(g, SlOp_ret);
-        emitRegAbs(g, g->outReg);
+    if (expr == -1) {
+        emitI(g, SlOp_retv, 0, Vals_null);
+        return;
+    }
+    SlNode *exprNode = getNode(g, expr);
+    if (exprNode->kind == SlNode_NullLit) {
+        emitI(g, SlOp_retv, 0, Vals_null);
+    } else if (exprNode->kind == SlNode_BoolLit) {
+        emitI(g, SlOp_retv, 0, !!(exprNode->as.boolLit));
     } else {
-        emitOp(g, SlOp_retnl);
+        if (!genExpr(g, expr)) return;
+        emitI(g, SlOp_ret, g->outReg, 0);
     }
 }
 
@@ -505,6 +580,25 @@ static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name) {
         g->ast.nodes[idx].as.lambda.paramCount,
         NULL
     );
+}
+
+static bool genTest(GenState *g, SlNodeIdx idx, bool inverse) {
+#define getT(test) (inverse ? inverseTest[(test) - SlOp_teq] : (test))
+
+    SlNode *node = getNode(g, idx);
+    switch (node->kind) {
+    case SlNode_NumInt:
+        return inverse ? emitJ(g, 1) : true;
+    case SlNode_NullLit:
+        return inverse ? true : emitJ(g, 1);
+    case SlNode_BoolLit:
+        return node->as.boolLit ^ inverse ? true : emitJ(g, 1);
+    default:
+        if (!genExpr(g, idx)) return false;
+        return emitI(g, getT(SlOp_ttr), g->outReg, 0);
+    }
+
+#undef genT
 }
 
 static bool genExpr(GenState *g, SlNodeIdx idx) {

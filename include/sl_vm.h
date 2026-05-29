@@ -142,7 +142,7 @@ typedef struct SlSharedInfo {
 
 struct SlPrototype {
     SlGCObj asGCObj;
-    uint8_t *bytes;
+    uint32_t *bytecode;
     uint32_t size;
     uint32_t constCount;
     SlObj *constants;
@@ -245,12 +245,12 @@ SlObj slFrozenStrNew(
 SlObj slFrozenStrFmt(SlVM *vm, const char *fmt, ...);
 
 // Create a new function prototype object.
-// Ownership of bytes, constants, sharedInfo and debugInfo is transferred to
+// Ownership of bytecode, constants, sharedInfo and debugInfo is transferred to
 // the new object.
 // If an error occurs return slNull.
 SlObj slPrototypeNew(
     SlVM *vm,
-    uint8_t *bytes,
+    uint32_t *bytecode,
     uint32_t size,
     SlObj *constants,
     uint32_t constCount,

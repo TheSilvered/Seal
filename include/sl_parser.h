@@ -33,7 +33,7 @@ typedef enum SlBinOp {
     SlBinOp_Mod,
     SlBinOp_Pow,
 
-    SlBinOp_Lt, // NOTE: keep in sync with isOpJumpable in codegen
+    SlBinOp_Lt,
     SlBinOp_Le,
     SlBinOp_Gt,
     SlBinOp_Ge,

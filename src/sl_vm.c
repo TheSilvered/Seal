@@ -137,7 +137,7 @@ SlObj slFrozenStrFmt(SlVM *vm, const char *fmt, ...) {
 
 SlObj slPrototypeNew(
     SlVM *vm,
-    uint8_t *bytes,
+    uint32_t *bytecode,
     uint32_t size,
     SlObj *constants,
     uint32_t constCount,
@@ -151,7 +151,7 @@ SlObj slPrototypeNew(
 
     if (proto == NULL) {
         slSetOutOfMemoryError(vm);
-        memFree(bytes);
+        memFree(bytecode);
         for (uint32_t i = 0; i < constCount; i++) {
             slDelRef(constants[i]);
         }
@@ -161,7 +161,7 @@ SlObj slPrototypeNew(
     }
 
     proto->asGCObj.refCount = 1;
-    proto->bytes = bytes;
+    proto->bytecode = bytecode;
     proto->size = size;
     proto->constants = constants;
     proto->constCount = constCount;

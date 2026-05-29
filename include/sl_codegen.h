@@ -37,7 +37,7 @@ x = use arg extension
 // R = register stack
 // K = constants
 // SH = shared values
-// vals = [false, true]
+// vals = [false, true, null]
 typedef enum SlOpCode {
     // Binary ops
 
@@ -87,11 +87,12 @@ typedef enum SlOpCode {
     SlOp_mkf,     // (I) R[rdx] = newClosure(K[imm])
     SlOp_call,    // (I) R[rdx] = R[rdx](R[rdx + 1], ..., R[rdx + uint(imm)])
     SlOp_tcall,   // (I) R[rdx] = R[rdx](R[rdx + 1], ..., R[rdx + uint(imm)])
-    SlOp_ret,     // (C) if (b) return R[r1x]; else return null;
+    SlOp_ret,     // (I) return R[rdx]
+    SlOp_retv,    // (I) return vals[uint(imm)];
 
     // Jump & tests
 
-    SlOp_jmp,     // (J) pc += int(immx)
+    SlOp_jmp,     // (J) pc += int(immx) (offset relative to the next instruction)
 
     SlOp_teq,     // (C) if (R[rd] == R[r1x]) pc++;
     SlOp_teqi,    // (I) if (R[rd] == int(imm)) pc++;
@@ -105,10 +106,10 @@ typedef enum SlOpCode {
     SlOp_tgti,    // (I) if (R[rd] >  int(imm)) pc++;
     SlOp_tge,     // (C) if (R[rd] >= R[r1x]) pc++;
     SlOp_tgei,    // (I) if (R[rd] >= int(imm)) pc++;
-    SlOp_ttr,     // (I) if (truthy(R[r1x]) pc++;
-    SlOp_tfl,     // (I) if (!truthy(R[r1x]) pc++;
-    SlOp_tnl,     // (I) if (R[r1x] == null) pc++;
-    SlOp_tnnl,    // (I) if (R[r1x] != null) pc++;
+    SlOp_ttr,     // (I) if (truthy(R[rdx]) pc++;
+    SlOp_tfl,     // (I) if (!truthy(R[rdx]) pc++;
+    SlOp_tnl,     // (I) if (R[rdx] == null) pc++;
+    SlOp_tnnl,    // (I) if (R[rdx] != null) pc++;
 
     // Collections
 
@@ -123,7 +124,7 @@ typedef enum SlOpCode {
 
     // Other
 
-    SlOp_print,   // (I) print(S[rdx]);
+    SlOp_print,   // (I) print(S[rdx]); (placeholder)
     SlOp_ext = 127
 } SlOpCode;
 
