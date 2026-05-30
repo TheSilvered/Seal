@@ -11,18 +11,21 @@ All registers can be at most two bytes (hence the argument extensions)
 
  3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0
  1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
-|      r2       |      r1       |      rd       |     op      |x|  (A) Arithmetic
-|      imm      |      r1       |      rd       |     op      |x|  (K) Immediate arithmetic
-|      imm      |              rdx              |     op      |x|  (I) Immediate
-|              r1x              |      rd       |     op      |x|  (C) Check op
-|                      immx                     |     op      |0|  (J) Jump
+|      r2       |      r1       |      rd       |     op      |x|  (A)  Arithmetic
+|      imm      |      r1       |      rd       |     op      |x|  (Ku) Immediate arithmetic (unsigned)
+|      imm      |      r1       |      rd       |     op      |x|  (Ks) Immediate arithmetic (signed)
+|      imm      |              rdx              |     op      |x|  (Iu) Immediate (unsigned)
+|      imm      |              rdx              |     op      |x|  (Is) Immediate (signed)
+|              r1x              |      rd       |     op      |x|  (T)  Two argument
+|0 0 0 0 0 0 0 0|              rdx              |     op      |0|  (O)  One argument
+|                      immx                     |     op      |0|  (J)  Jump
 
  6 6 6 6 5 5 5 5 5 5 5 5 5 5 4 4 4 4 4 4 4 4 4 4 3 3 3 3 3 3 3 3
  3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2
 |      r2u      |      r1u      |      rdu      |1 1 1 1 1 1 1 0|  (A) extension
 |     immu      |      r1u      |      rdu      |1 1 1 1 1 1 1 0|  (K) extension
 |                    immux                      |1 1 1 1 1 1 1 0|  (I) extension
-|0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0|      rdu      |1 1 1 1 1 1 1 0|  (C) extension
+|0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0|      rdu      |1 1 1 1 1 1 1 0|  (D) extension
 
 rd = destination register
 r1 = first register
@@ -41,90 +44,90 @@ x = use arg extension
 typedef enum SlOpCode {
     // Binary ops
 
-    SlOp_add = 2, // (A) R[rd] = R[r1] + R[r2]
-    SlOp_addi,    // (K) R[rd] = R[r1] + int(imm)
-    SlOp_sub,     // (A) R[rd] = R[r1] - R[r2]
-    SlOp_subi,    // (K) R[rd] = R[r1] - int(imm)
-    SlOp_mul,     // (A) R[rd] = R[r1] * R[r2]
-    SlOp_muli,    // (K) R[rd] = R[r1] * int(imm)
-    SlOp_div,     // (A) R[rd] = R[r1] / R[r2]
-    SlOp_divi,    // (K) R[rd] = R[r1] / int(imm)
-    SlOp_mod,     // (A) R[rd] = R[r1] % R[r2]
-    SlOp_modi,    // (K) R[rd] = R[r1] % int(imm)
-    SlOp_pow,     // (A) R[rd] = R[r1] ^ R[r2]
-    SlOp_powi,    // (K) R[rd] = R[r1] ^ int(imm)
+    SlOp_add,     // (A)  R[rd] = R[r1] + R[r2]
+    SlOp_addi,    // (Ks) R[rd] = R[r1] + imm
+    SlOp_sub,     // (A)  R[rd] = R[r1] - R[r2]
+    SlOp_subi,    // (Ks) R[rd] = R[r1] - imm
+    SlOp_mul,     // (A)  R[rd] = R[r1] * R[r2]
+    SlOp_muli,    // (Ks) R[rd] = R[r1] * imm
+    SlOp_div,     // (A)  R[rd] = R[r1] / R[r2]
+    SlOp_divi,    // (Ks) R[rd] = R[r1] / imm
+    SlOp_mod,     // (A)  R[rd] = R[r1] % R[r2]
+    SlOp_modi,    // (Ks) R[rd] = R[r1] % imm
+    SlOp_pow,     // (A)  R[rd] = R[r1] ^ R[r2]
+    SlOp_powi,    // (Ks) R[rd] = R[r1] ^ imm
 
-    SlOp_eq,      // (A) R[rd] = R[r1] == R[r2]
-    SlOp_eqi,     // (K) R[rd] = R[r1] == int(imm)
-    SlOp_ne,      // (A) R[rd] = R[r1] != R[r2]
-    SlOp_nei,     // (K) R[rd] = R[r1] != int(imm)
-    SlOp_lt,      // (A) R[rd] = R[r1] < R[r2]
-    SlOp_lti,     // (K) R[rd] = R[r1] < int(imm)
-    SlOp_le,      // (A) R[rd] = R[r1] <= R[r2]
-    SlOp_lei,     // (K) R[rd] = R[r1] <= int(imm)
-    SlOp_gt,      // (A) R[rd] = R[r1] > R[r2]
-    SlOp_gti,     // (K) R[rd] = R[r1] > int(imm)
-    SlOp_ge,      // (A) R[rd] = R[r1] >= R[r2]
-    SlOp_gei,     // (K) R[rd] = R[r1] >= int(imm)
+    SlOp_eq,      // (A)  R[rd] = R[r1] == R[r2]
+    SlOp_eqi,     // (Ks) R[rd] = R[r1] == imm
+    SlOp_ne,      // (A)  R[rd] = R[r1] != R[r2]
+    SlOp_nei,     // (Ks) R[rd] = R[r1] != imm
+    SlOp_lt,      // (A)  R[rd] = R[r1] < R[r2]
+    SlOp_lti,     // (Ks) R[rd] = R[r1] < imm
+    SlOp_le,      // (A)  R[rd] = R[r1] <= R[r2]
+    SlOp_lei,     // (Ks) R[rd] = R[r1] <= imm
+    SlOp_gt,      // (A)  R[rd] = R[r1] > R[r2]
+    SlOp_gti,     // (Ks) R[rd] = R[r1] > imm
+    SlOp_ge,      // (A)  R[rd] = R[r1] >= R[r2]
+    SlOp_gei,     // (Ks) R[rd] = R[r1] >= imm
 
     // Register management
 
-    SlOp_mov,     // (C) R[rd] = R[r1x]
-    SlOp_ldn,     // (I) for (i = 0; i < uint(imm); i++) R[rdx + i] = null;
-    SlOp_ldi,     // (I) R[rdx] = int(imm)
-    SlOp_ldv,     // (I) R[rdx] = copy(vals[imm])
-    SlOp_ldk,     // (I) R[rdx] = K[imm]
+    SlOp_mov,     // (T)  R[rd] = R[r1x]
+    SlOp_ldn,     // (Iu) for (i = 0; i < imm; i++) R[rdx + i] = null
+    SlOp_ldi,     // (Is) R[rdx] = imm
+    SlOp_ldv,     // (Iu) R[rdx] = copy(vals[imm])
+    SlOp_ldk,     // (Iu) R[rdx] = K[imm]
 
     // Shared slots
 
-    SlOp_ldsh,    // (I) R[rdx] = SH[uint(imm)].value
-    SlOp_stsh,    // (I) SH[uint(imm)].value = R[rdx]
-    SlOp_mksh,    // (C) R[rd] = newShared(r1x)
-    SlOp_dtsh,    // (I) for (i = 0; i < uint(imm); i++) R[rdx + i] = detach(S[rdx + i]);
+    SlOp_ldsh,    // (Iu) R[rdx] = SH[imm].value
+    SlOp_stsh,    // (Iu) SH[imm].value = R[rdx]
+    SlOp_mksh,    // (T)  R[rd] = newShared(r1x)
+    SlOp_dtsh,    // (Iu) for (i = 0; i < imm; i++) R[rdx + i] = detach(S[rdx + i])
 
     // Functions
 
-    SlOp_mkf,     // (I) R[rdx] = newClosure(K[imm])
-    SlOp_call,    // (I) R[rdx] = R[rdx](R[rdx + 1], ..., R[rdx + uint(imm)])
-    SlOp_tcall,   // (I) R[rdx] = R[rdx](R[rdx + 1], ..., R[rdx + uint(imm)])
-    SlOp_ret,     // (I) return R[rdx]
-    SlOp_retv,    // (I) return vals[uint(imm)];
+    SlOp_mkf,     // (Iu)  R[rdx] = newClosure(K[imm])
+    SlOp_call,    // (Iu)  R[rdx] = R[rdx](R[rdx + 1], ..., R[rdx + imm])
+    SlOp_tcall,   // (Iu)  R[rdx] = R[rdx](R[rdx + 1], ..., R[rdx + imm])
+    SlOp_ret,     // (O)   return R[rdx]
+    SlOp_retv,    // (Iu)  return vals[imm]
 
     // Jump & tests
 
-    SlOp_jmp,     // (J) pc += int(immx) (offset relative to the next instruction)
+    SlOp_jmp,     // (J)  pc += immx  ; offset relative to the next instruction
 
-    SlOp_teq,     // (C) if (R[rd] == R[r1x]) pc++;
-    SlOp_teqi,    // (I) if (R[rd] == int(imm)) pc++;
-    SlOp_tne,     // (C) if (R[rd] != R[r1x]) pc++;
-    SlOp_tnei,    // (I) if (R[rd] != int(imm)) pc++;
-    SlOp_tlt,     // (C) if (R[rd] <  R[r1x]) pc++;
-    SlOp_tlti,    // (I) if (R[rd] <  int(imm)) pc++;
-    SlOp_tle,     // (C) if (R[rd] <= R[r1x]) pc++;
-    SlOp_tlei,    // (I) if (R[rd] <= int(imm)) pc++;
-    SlOp_tgt,     // (C) if (R[rd] >  R[r1x]) pc++;
-    SlOp_tgti,    // (I) if (R[rd] >  int(imm)) pc++;
-    SlOp_tge,     // (C) if (R[rd] >= R[r1x]) pc++;
-    SlOp_tgei,    // (I) if (R[rd] >= int(imm)) pc++;
-    SlOp_ttr,     // (I) if (truthy(R[rdx]) pc++;
-    SlOp_tfl,     // (I) if (!truthy(R[rdx]) pc++;
-    SlOp_tnl,     // (I) if (R[rdx] == null) pc++;
-    SlOp_tnnl,    // (I) if (R[rdx] != null) pc++;
+    SlOp_teq,     // (T)  if (R[rd]  == R[r1x]) pc++
+    SlOp_teqi,    // (Is) if (R[rdx] == imm)    pc++
+    SlOp_tne,     // (T)  if (R[rd]  != R[r1x]) pc++
+    SlOp_tnei,    // (Is) if (R[rdx] != imm)    pc++
+    SlOp_tlt,     // (T)  if (R[rd]  <  R[r1x]) pc++
+    SlOp_tlti,    // (Is) if (R[rdx] <  imm)    pc++
+    SlOp_tle,     // (T)  if (R[rd]  <= R[r1x]) pc++
+    SlOp_tlei,    // (Is) if (R[rdx] <= imm)    pc++
+    SlOp_tgt,     // (T)  if (R[rd]  >  R[r1x]) pc++
+    SlOp_tgti,    // (Is) if (R[rdx] >  imm)    pc++
+    SlOp_tge,     // (T)  if (R[rd]  >= R[r1x]) pc++
+    SlOp_tgei,    // (Is) if (R[rdx] >= imm)    pc++
+    SlOp_ttr,     // (O)  if (truthy(R[rdx])    pc++
+    SlOp_tfl,     // (O)  if (!truthy(R[rdx])   pc++
+    SlOp_tnl,     // (O)  if (R[rdx] == null)   pc++
+    SlOp_tnnl,    // (O)  if (R[rdx] != null)   pc++
 
     // Collections
 
     // TODO: collection creation instructions
 
-    SlOp_cget,    // (A) R[rd] = R[r1][R[r2]]
-    SlOp_cgeti,   // (K) R[rd] = R[r1][int(r2)]
-    SlOp_cgetk,   // (K) R[rd] = R[r1][K[r2]]
-    SlOp_cset,    // (A) R[rd][R[r1]] = R[r2]
-    SlOp_cseti,   // (A) R[rd][int(r1)] = R[r2]
-    SlOp_csetk,   // (A) R[rd][K[r2]] = R[r2]
+    SlOp_cget,    // (A)  R[rd] = R[r1][R[r2]]
+    SlOp_cgeti,   // (Ks) R[rd] = R[r1][imm]
+    SlOp_cgetk,   // (Ku) R[rd] = R[r1][K[imm]]
+    SlOp_cset,    // (A)  R[rd][R[r1]] = R[r2]
+    SlOp_cseti,   // (Ks)  R[rd][imm] = R[r1]
+    SlOp_csetk,   // (Ku)  R[rd][K[imm]] = R[r2]
 
     // Other
 
-    SlOp_print,   // (I) print(S[rdx]); (placeholder)
+    SlOp_print,   // (O) print(S[rdx]) ; placeholder
     SlOp_ext = 127
 } SlOpCode;
 
