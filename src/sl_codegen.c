@@ -112,7 +112,11 @@ static void genRetStmnt(GenState *g, SlNodeIdx idx);
 
 // g->outReg contains the register where the value of the expression is stored
 
-static bool genTest(GenState *g, SlNodeIdx idx, bool inverse);
+// If idx is true the next instruction is taken
+// static bool testTrue(GenState *g, SlNodeIdx idx);
+// If idx is false the next instruction is taken
+static bool testFalse(GenState *g, SlNodeIdx idx);
+
 static bool genExpr(GenState *g, SlNodeIdx idx);
 static void genLambda(GenState *g, SlNodeIdx idx, SlStrIdx name);
 static void genBinOp(GenState *g, SlNodeIdx idx);
@@ -207,7 +211,7 @@ static bool emitKs(
 
 static bool emitIu(GenState *g, SlOpCode op, uint16_t rd, uint32_t imm) {
     bool extended = imm > 0xff;
-    uint32_t inst1 = ((imm & 0xff) << 24) | rd | (op << 1) | extended;
+    uint32_t inst1 = ((imm & 0xff) << 24) | (rd << 8) | (op << 1) | extended;
 
     if (!slU32Push(g->vm, &g->func->bytecode, inst1)) return false;
     if (!extended) return true;
@@ -248,13 +252,13 @@ static bool emitJ(GenState *g, int32_t offset) {
 }
 
 static uint32_t jumpPlaceholder(GenState *g) {
-    return slU32Push(g->vm, &g->func->bytecode, SlOp_jmp << 1);
+    slU32Push(g->vm, &g->func->bytecode, SlOp_jmp << 1);
+    return g->func->bytecode.len - 1;
 }
 
 static bool jumpTo(GenState *g, uint32_t placeholder, uint32_t goal) {
-    uint32_t dist = goal > placeholder
-        ? goal - placeholder
-        : placeholder - goal;
+    uint32_t start = placeholder + 1;
+    uint32_t dist = goal > start ? goal - start : start - goal;
 
     if (dist > _maxJump) {
         return false;
@@ -262,9 +266,9 @@ static bool jumpTo(GenState *g, uint32_t placeholder, uint32_t goal) {
 
     int32_t offset;
     if (goal > placeholder) {
-        offset = (int32_t)dist - 1;
+        offset = (int32_t)dist;
     } else {
-        offset = -(int32_t)dist - 1;
+        offset = -(int32_t)dist;
     }
     g->func->bytecode.data[placeholder] |= (offset << 8);
     return true;
@@ -496,7 +500,7 @@ static void genVarDeclr(GenState *g, SlNodeIdx idx) {
 
 static void genIfStmnt(GenState *g, SlNodeIdx idx) {
     SlNode *node = getNode(g, idx);
-    if (!genTest(g, node->as.ifStmnt.condition, true)) return;
+    if (!testFalse(g, node->as.ifStmnt.condition)) return;
     uint32_t toTrueEnd = jumpPlaceholder(g);
     if (!genStmnt(g, node->as.ifStmnt.ifTrue)) return;
 
@@ -513,7 +517,7 @@ static void genIfStmnt(GenState *g, SlNodeIdx idx) {
 
 static void genWhileLoop(GenState *g, SlNodeIdx idx) {
     uint32_t condStart = getPos(g);
-    if (!genTest(g, getNode(g, idx)->as.whileLoop.condition, true)) return;
+    if (!testFalse(g, getNode(g, idx)->as.whileLoop.condition)) return;
     uint32_t toBodyEnd = jumpPlaceholder(g);
     if (!genStmnt(g, getNode(g, idx)->as.whileLoop.body)) return;
     jumpTo(g, jumpPlaceholder(g), condStart);
@@ -592,17 +596,17 @@ static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name) {
     );
 }
 
-static bool genTest(GenState *g, SlNodeIdx idx, bool inverse) {
-#define getT(test) (inverse ? inverseTest[(test) - SlOp_teq] : (test))
+static bool genTest(GenState *g, SlNodeIdx idx, bool testFalse) {
+#define getT(test) (testFalse ? inverseTest[(test) - SlOp_teq] : (test))
 
     SlNode *node = getNode(g, idx);
     switch (node->kind) {
     case SlNode_NumInt:
-        return inverse ? emitJ(g, 1) : true;
+        return testFalse ? emitJ(g, 1) : true;
     case SlNode_NullLit:
-        return inverse ? true : emitJ(g, 1);
+        return testFalse ? true : emitJ(g, 1);
     case SlNode_BoolLit:
-        return node->as.boolLit ^ inverse ? true : emitJ(g, 1);
+        return node->as.boolLit ^ testFalse ? true : emitJ(g, 1);
     default: {
         uint16_t testSlots = getSlot(g);
         if (!genExpr(g, idx)) return false;
@@ -612,7 +616,15 @@ static bool genTest(GenState *g, SlNodeIdx idx, bool inverse) {
     }
     }
 
-#undef genT
+#undef getT
+}
+
+// static bool testTrue(GenState *g, SlNodeIdx idx) {
+//     return genTest(g, idx, false);
+// }
+
+static bool testFalse(GenState *g, SlNodeIdx idx) {
+    return genTest(g, idx, true);
 }
 
 static bool genExpr(GenState *g, SlNodeIdx idx) {
@@ -708,19 +720,17 @@ static void genBinOp(GenState *g, SlNodeIdx idx) {
     case SlBinOp_Le:
         emitA(g, SlOp_le, g->outReg, lhs, rhs);
         break;
-    case SlBinOp_Gt: {
+    case SlBinOp_Gt:
         emitA(g, SlOp_gt, g->outReg, lhs, rhs);
         break;
-    }
-    case SlBinOp_Ge: {
+    case SlBinOp_Ge:
         emitA(g, SlOp_ge, g->outReg, lhs, rhs);
         break;
-    }
     case SlBinOp_Eq:
         emitA(g, SlOp_eq, g->outReg, lhs, rhs);
         break;
     case SlBinOp_Ne:
-        emitA(g, SlOp_ge, g->outReg, lhs, rhs);
+        emitA(g, SlOp_ne, g->outReg, lhs, rhs);
         break;
     }
 }
@@ -728,7 +738,7 @@ static void genBinOp(GenState *g, SlNodeIdx idx) {
 static void genNumInt(GenState *g, SlNodeIdx idx) {
     int64_t num = getNode(g, idx)->as.numInt;
     if (!useOutRegNew(g, idx)) return;
-    if (num > -128 && num < 127) {
+    if (num >= -128 && num <= 127) {
         emitIs(g, SlOp_ldi, g->outReg, (int32_t)num);
     } else {
         int32_t constIdx = addConst(g, idx, slObjInt(num));
@@ -872,265 +882,81 @@ static void printBytecode(const uint32_t *bytecode, uint32_t len) {
         OP_J
     };
 
-    for (uint32_t i = 0; i < len; i++) {
+    // for (uint32_t i = 0; i < len; i++) {
+    //     printf("%4"PRIu32"  0x%08"PRIx32"\n", i, bytecode[i]);
+    // }
+
+    for (uint32_t i = 0; i < len;) {
         printf("%4"PRIu32"  ",  i);
         uint32_t op = bytecode[i++];
         uint32_t ex = 0;
         if (op & 1) ex = bytecode[i++];
 
         enum OpType type;
-        switch ((SlOpCode)op) {
-        case SlOp_add:
-            printf("add");
-            type = OP_A;
-            break;
-        case SlOp_addi:
-            printf("addi");
-            type = OP_KS;
-            break;
-        case SlOp_sub:
-            printf("sub");
-            type = OP_A;
-            break;
-        case SlOp_subi:
-            printf("subi");
-            type = OP_KS;
-            break;
-        case SlOp_mul:
-            printf("mul");
-            type = OP_A;
-            break;
-        case SlOp_muli:
-            printf("muli");
-            type = OP_KS;
-            break;
-        case SlOp_div:
-            printf("div");
-            type = OP_A;
-            break;
-        case SlOp_divi:
-            printf("divi");
-            type = OP_KS;
-            break;
-        case SlOp_mod:
-            printf("mod");
-            type = OP_A;
-            break;
-        case SlOp_modi:
-            printf("modi");
-            type = OP_KS;
-            break;
-        case SlOp_pow:
-            printf("pow");
-            type = OP_A;
-            break;
-        case SlOp_powi:
-            printf("powi");
-            type = OP_KS;
-            break;
-        case SlOp_eq:
-            printf("eq");
-            type = OP_A;
-            break;
-        case SlOp_eqi:
-            printf("eqi");
-            type = OP_KS;
-            break;
-        case SlOp_ne:
-            printf("ne");
-            type = OP_A;
-            break;
-        case SlOp_nei:
-            printf("nei");
-            type = OP_KS;
-            break;
-        case SlOp_lt:
-            printf("lt");
-            type = OP_A;
-            break;
-        case SlOp_lti:
-            printf("lti");
-            type = OP_KS;
-            break;
-        case SlOp_le:
-            printf("le");
-            type = OP_A;
-            break;
-        case SlOp_lei:
-            printf("lei");
-            type = OP_KS;
-            break;
-        case SlOp_gt:
-            printf("gt");
-            type = OP_A;
-            break;
-        case SlOp_gti:
-            printf("gti");
-            type = OP_KS;
-            break;
-        case SlOp_ge:
-            printf("ge");
-            type = OP_A;
-            break;
-        case SlOp_gei:
-            printf("gei");
-            type = OP_KS;
-            break;
-        case SlOp_mov:
-            printf("mov");
-            type = OP_T;
-            break;
-        case SlOp_ldn:
-            printf("ldn");
-            type = OP_IU;
-            break;
-        case SlOp_ldi:
-            printf("ldi");
-            type = OP_IS;
-            break;
-        case SlOp_ldv:
-            printf("ldv");
-            type = OP_IU;
-            break;
-        case SlOp_ldk:
-            printf("ldk");
-            type = OP_IU;
-            break;
-        case SlOp_ldsh:
-            printf("ldsh");
-            type = OP_IU;
-            break;
-        case SlOp_stsh:
-            printf("stsh");
-            type = OP_IU;
-            break;
-        case SlOp_mksh:
-            printf("mksh");
-            type = OP_T;
-            break;
-        case SlOp_dtsh:
-            printf("dtsh");
-            type = OP_IU;
-            break;
-        case SlOp_mkf:
-            printf("mkf");
-            type = OP_IU;
-            break;
-        case SlOp_call:
-            printf("call");
-            type = OP_IU;
-            break;
-        case SlOp_tcall:
-            printf("tcall");
-            type = OP_IU;
-            break;
-        case SlOp_ret:
-            printf("ret");
-            type = OP_O;
-            break;
-        case SlOp_retv:
-            printf("retv");
-            type = OP_IU;
-            break;
-        case SlOp_jmp:
-            printf("jmp");
-            type = OP_J;
-            break;
-        case SlOp_teq:
-            printf("teq");
-            type = OP_T;
-            break;
-        case SlOp_teqi:
-            printf("teqi");
-            type = OP_IS;
-            break;
-        case SlOp_tne:
-            printf("tne");
-            type = OP_T;
-            break;
-        case SlOp_tnei:
-            printf("tnei");
-            type = OP_IS;
-            break;
-        case SlOp_tlt:
-            printf("tlt");
-            type = OP_T;
-            break;
-        case SlOp_tlti:
-            printf("tlti");
-            type = OP_IS;
-            break;
-        case SlOp_tle:
-            printf("tle");
-            type = OP_T;
-            break;
-        case SlOp_tlei:
-            printf("tlei");
-            type = OP_IS;
-            break;
-        case SlOp_tgt:
-            printf("tgt");
-            type = OP_T;
-            break;
-        case SlOp_tgti:
-            printf("tgti");
-            type = OP_IS;
-            break;
-        case SlOp_tge:
-            printf("tge");
-            type = OP_T;
-            break;
-        case SlOp_tgei:
-            printf("tgei");
-            type = OP_IS;
-            break;
-        case SlOp_ttr:
-            printf("ttr");
-            type = OP_O;
-            break;
-        case SlOp_tfl:
-            printf("tfl");
-            type = OP_O;
-            break;
-        case SlOp_tnl:
-            printf("tnl");
-            type = OP_O;
-            break;
-        case SlOp_tnnl:
-            printf("tnnl");
-            type = OP_O;
-            break;
-        case SlOp_cget:
-            printf("cget");
-            type = OP_A;
-            break;
-        case SlOp_cgeti:
-            printf("cgeti");
-            type = OP_KS;
-            break;
-        case SlOp_cgetk:
-            printf("cgetk");
-            type = OP_KU;
-            break;
-        case SlOp_cset:
-            printf("cset");
-            type = OP_A;
-            break;
-        case SlOp_cseti:
-            printf("cseti");
-            type = OP_KS;
-            break;
-        case SlOp_csetk:
-            printf("csetk");
-            type = OP_KU;
-            break;
-        case SlOp_print:
-            printf("print");
-            type = OP_O;
-            break;
-        case SlOp_ext:
-            type = OP_A;
-            break;
+        switch ((SlOpCode)(op >> 1 & 0x7f)) {
+        case SlOp_add:   printf("add");   type = OP_A;  break;
+        case SlOp_addi:  printf("addi");  type = OP_KS; break;
+        case SlOp_sub:   printf("sub");   type = OP_A;  break;
+        case SlOp_subi:  printf("subi");  type = OP_KS; break;
+        case SlOp_mul:   printf("mul");   type = OP_A;  break;
+        case SlOp_muli:  printf("muli");  type = OP_KS; break;
+        case SlOp_div:   printf("div");   type = OP_A;  break;
+        case SlOp_divi:  printf("divi");  type = OP_KS; break;
+        case SlOp_mod:   printf("mod");   type = OP_A;  break;
+        case SlOp_modi:  printf("modi");  type = OP_KS; break;
+        case SlOp_pow:   printf("pow");   type = OP_A;  break;
+        case SlOp_powi:  printf("powi");  type = OP_KS; break;
+        case SlOp_eq:    printf("eq");    type = OP_A;  break;
+        case SlOp_eqi:   printf("eqi");   type = OP_KS; break;
+        case SlOp_ne:    printf("ne");    type = OP_A;  break;
+        case SlOp_nei:   printf("nei");   type = OP_KS; break;
+        case SlOp_lt:    printf("lt");    type = OP_A;  break;
+        case SlOp_lti:   printf("lti");   type = OP_KS; break;
+        case SlOp_le:    printf("le");    type = OP_A;  break;
+        case SlOp_lei:   printf("lei");   type = OP_KS; break;
+        case SlOp_gt:    printf("gt");    type = OP_A;  break;
+        case SlOp_gti:   printf("gti");   type = OP_KS; break;
+        case SlOp_ge:    printf("ge");    type = OP_A;  break;
+        case SlOp_gei:   printf("gei");   type = OP_KS; break;
+        case SlOp_mov:   printf("mov");   type = OP_T;  break;
+        case SlOp_ldn:   printf("ldn");   type = OP_IU; break;
+        case SlOp_ldi:   printf("ldi");   type = OP_IS; break;
+        case SlOp_ldv:   printf("ldv");   type = OP_IU; break;
+        case SlOp_ldk:   printf("ldk");   type = OP_IU; break;
+        case SlOp_ldsh:  printf("ldsh");  type = OP_IU; break;
+        case SlOp_stsh:  printf("stsh");  type = OP_IU; break;
+        case SlOp_mksh:  printf("mksh");  type = OP_T;  break;
+        case SlOp_dtsh:  printf("dtsh");  type = OP_IU; break;
+        case SlOp_mkf:   printf("mkf");   type = OP_IU; break;
+        case SlOp_call:  printf("call");  type = OP_IU; break;
+        case SlOp_tcall: printf("tcall"); type = OP_IU; break;
+        case SlOp_ret:   printf("ret");   type = OP_O;  break;
+        case SlOp_retv:  printf("retv");  type = OP_IU; break;
+        case SlOp_jmp:   printf("jmp");   type = OP_J;  break;
+        case SlOp_teq:   printf("teq");   type = OP_T;  break;
+        case SlOp_teqi:  printf("teqi");  type = OP_IS; break;
+        case SlOp_tne:   printf("tne");   type = OP_T;  break;
+        case SlOp_tnei:  printf("tnei");  type = OP_IS; break;
+        case SlOp_tlt:   printf("tlt");   type = OP_T;  break;
+        case SlOp_tlti:  printf("tlti");  type = OP_IS; break;
+        case SlOp_tle:   printf("tle");   type = OP_T;  break;
+        case SlOp_tlei:  printf("tlei");  type = OP_IS; break;
+        case SlOp_tgt:   printf("tgt");   type = OP_T;  break;
+        case SlOp_tgti:  printf("tgti");  type = OP_IS; break;
+        case SlOp_tge:   printf("tge");   type = OP_T;  break;
+        case SlOp_tgei:  printf("tgei");  type = OP_IS; break;
+        case SlOp_ttr:   printf("ttr");   type = OP_O;  break;
+        case SlOp_tfl:   printf("tfl");   type = OP_O;  break;
+        case SlOp_tnl:   printf("tnl");   type = OP_O;  break;
+        case SlOp_tnnl:  printf("tnnl");  type = OP_O;  break;
+        case SlOp_cget:  printf("cget");  type = OP_A;  break;
+        case SlOp_cgeti: printf("cgeti"); type = OP_KS; break;
+        case SlOp_cgetk: printf("cgetk"); type = OP_KU; break;
+        case SlOp_cset:  printf("cset");  type = OP_A;  break;
+        case SlOp_cseti: printf("cseti"); type = OP_KS; break;
+        case SlOp_csetk: printf("csetk"); type = OP_KU; break;
+        case SlOp_print: printf("print"); type = OP_O;  break;
+        case SlOp_ext: type = OP_A; break;
         }
 
         switch (type) {
@@ -1138,14 +964,14 @@ static void printBytecode(const uint32_t *bytecode, uint32_t len) {
             uint16_t rd = (ex & 0xff00) | (op >> 8 & 0xff);
             uint16_t r1 = (ex >> 8 & 0xff00) | (op >> 16 & 0xff);
             uint16_t r2 = (ex >> 16 & 0xff00) | (op >> 24 & 0xff);
-            printf("\trd=%u\tr1=%u\tr2=%u", rd, r1, r2);
+            printf("\tr%u\tr%u\tr%u", rd, r1, r2);
             break;
         }
         case OP_KU: {
             uint16_t rd = (ex & 0xff00) | (op >> 8 & 0xff);
             uint16_t r1 = (ex >> 8 & 0xff00) | (op >> 16 & 0xff);
             uint16_t imm = (ex >> 16 & 0xff00) | (op >> 24 & 0xff);
-            printf("\trd=%u\tr1=%u\timm=%u", rd, r1, imm);
+            printf("\tr%u\tr%u\t%u", rd, r1, imm);
             break;
         }
         case OP_KS: {
@@ -1156,13 +982,13 @@ static void printBytecode(const uint32_t *bytecode, uint32_t len) {
                 imm = (int8_t)(op >> 24 & 0xff);
             else
                 imm = (int16_t)((ex >> 16 & 0xff00) | (op >> 24 & 0xff));
-            printf("\trd=%u\tr1=%u\timm=%d", rd, r1, imm);
+            printf("\tr%u\tr%u\t%+d", rd, r1, imm);
             break;
         }
         case OP_IU: {
             uint16_t rd = op >> 8 & 0xffff;
             uint32_t imm = (ex >> 16 & 0xffffff00) | (op >> 24 & 0xff);
-            printf("\trd=%u\timm=%"PRIu32, rd, imm);
+            printf("\tr%u\t%"PRIu32, rd, imm);
             break;
         }
         case OP_IS: {
@@ -1172,31 +998,33 @@ static void printBytecode(const uint32_t *bytecode, uint32_t len) {
                 imm = (int8_t)(op >> 24 & 0xff);
             else
                 imm = (int32_t)((ex >> 16 & 0xffffff00) | (op >> 24 & 0xff));
-            printf("\trd=%u\timm=%"PRIi32, rd, imm);
+            printf("\tr%u\t%+"PRIi32, rd, imm);
             break;
         }
         case OP_T: {
             uint16_t rd = (ex & 0xff00) | (op >> 8 & 0xff);
             uint16_t r1 = op >> 16 & 0xffff;
-            printf("\trd=%u\tr1=%u", rd, r1);
+            printf("\tr%u\tr%u", rd, r1);
             break;
         }
         case OP_O: {
             uint16_t rd = op >> 8 & 0xffff;
-            printf("\trd=%u", rd);
+            printf("\tr%u", rd);
             break;
         }
         case OP_J: {
             int32_t imm;
             if (op >> 31)
-                imm = 0xffffffff & (op >> 8);
+                imm = 0xff000000 | op >> 8;
             else
                 imm = op >> 8;
-            printf("\timm=%"PRIi32" (to %"PRIu32")", imm, i + imm);
+            printf("\t%+"PRIi32" (to %"PRIi32")", imm, i + imm);
             break;
         }
         }
         printf("\n");
+        if (ex != 0)
+            printf("%4"PRIu32"  --- ext ---\n",  i - 1);
     }
 }
 

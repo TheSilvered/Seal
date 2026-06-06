@@ -173,7 +173,7 @@ typedef struct SlStackBlock {
 
 typedef struct SlCallFrame {
     SlFunc *func;
-    uint64_t pc;
+    uint32_t *ip;
     SlObj *retAddress;
     SlObj *stackTop;
 } SlCallFrame;
@@ -200,9 +200,8 @@ typedef struct SlVM {
     SlMethodTable *mtTop; // TBD
     SlStackBlock *stackTop; // Runtime value stack
     SlCallStack callStack; // Runtime call stack
-    uint64_t pc; // Program counter
     struct {
-        uint8_t *bytes; // Bytecode
+        uint32_t *ip; // Instruction pointer
         SlObj *consts; // Constants
         SlObj *stack; // Pointer to the first value of the stack frame
         SlSharedSlot **shared; // Shared slots

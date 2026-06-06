@@ -329,7 +329,7 @@ static void destroyObj(SlObj o) {
             memFree(debugInfo);
         }
 
-        memFree(o.as.proto->bytes);
+        memFree(o.as.proto->bytecode);
         memFree(o.as.proto->constants);
         memFree(o.as.proto->sharedInfo);
         memFree(o.as.proto);

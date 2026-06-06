@@ -83,7 +83,7 @@ typedef enum SlOpCode {
     SlOp_ldsh,    // (Iu) R[rdx] = SH[imm].value
     SlOp_stsh,    // (Iu) SH[imm].value = R[rdx]
     SlOp_mksh,    // (T)  R[rd] = newShared(r1x)
-    SlOp_dtsh,    // (Iu) for (i = 0; i < imm; i++) R[rdx + i] = detach(S[rdx + i])
+    SlOp_dtsh,    // (Iu) for (i = 0; i < imm; i++) detach(R[rdx + i])
 
     // Functions
 
@@ -97,22 +97,22 @@ typedef enum SlOpCode {
 
     SlOp_jmp,     // (J)  pc += immx  ; offset relative to the next instruction
 
-    SlOp_teq,     // (T)  if (R[rd]  == R[r1x]) pc++
-    SlOp_teqi,    // (Is) if (R[rdx] == imm)    pc++
-    SlOp_tne,     // (T)  if (R[rd]  != R[r1x]) pc++
-    SlOp_tnei,    // (Is) if (R[rdx] != imm)    pc++
-    SlOp_tlt,     // (T)  if (R[rd]  <  R[r1x]) pc++
-    SlOp_tlti,    // (Is) if (R[rdx] <  imm)    pc++
-    SlOp_tle,     // (T)  if (R[rd]  <= R[r1x]) pc++
-    SlOp_tlei,    // (Is) if (R[rdx] <= imm)    pc++
-    SlOp_tgt,     // (T)  if (R[rd]  >  R[r1x]) pc++
-    SlOp_tgti,    // (Is) if (R[rdx] >  imm)    pc++
-    SlOp_tge,     // (T)  if (R[rd]  >= R[r1x]) pc++
-    SlOp_tgei,    // (Is) if (R[rdx] >= imm)    pc++
-    SlOp_ttr,     // (O)  if (truthy(R[rdx])    pc++
-    SlOp_tfl,     // (O)  if (!truthy(R[rdx])   pc++
-    SlOp_tnl,     // (O)  if (R[rdx] == null)   pc++
-    SlOp_tnnl,    // (O)  if (R[rdx] != null)   pc++
+    SlOp_teq,     // (T)  if !(R[rd]  == R[r1x]) pc++
+    SlOp_teqi,    // (Is) if !(R[rdx] == imm)    pc++
+    SlOp_tne,     // (T)  if !(R[rd]  != R[r1x]) pc++
+    SlOp_tnei,    // (Is) if !(R[rdx] != imm)    pc++
+    SlOp_tlt,     // (T)  if !(R[rd]  <  R[r1x]) pc++
+    SlOp_tlti,    // (Is) if !(R[rdx] <  imm)    pc++
+    SlOp_tle,     // (T)  if !(R[rd]  <= R[r1x]) pc++
+    SlOp_tlei,    // (Is) if !(R[rdx] <= imm)    pc++
+    SlOp_tgt,     // (T)  if !(R[rd]  >  R[r1x]) pc++
+    SlOp_tgti,    // (Is) if !(R[rdx] >  imm)    pc++
+    SlOp_tge,     // (T)  if !(R[rd]  >= R[r1x]) pc++
+    SlOp_tgei,    // (Is) if !(R[rdx] >= imm)    pc++
+    SlOp_ttr,     // (O)  if !(truthy(R[rdx])    pc++
+    SlOp_tfl,     // (O)  if !(!truthy(R[rdx])   pc++
+    SlOp_tnl,     // (O)  if !(R[rdx] == null)   pc++
+    SlOp_tnnl,    // (O)  if !(R[rdx] != null)   pc++
 
     // Collections
 
@@ -122,8 +122,8 @@ typedef enum SlOpCode {
     SlOp_cgeti,   // (Ks) R[rd] = R[r1][imm]
     SlOp_cgetk,   // (Ku) R[rd] = R[r1][K[imm]]
     SlOp_cset,    // (A)  R[rd][R[r1]] = R[r2]
-    SlOp_cseti,   // (Ks)  R[rd][imm] = R[r1]
-    SlOp_csetk,   // (Ku)  R[rd][K[imm]] = R[r2]
+    SlOp_cseti,   // (Ks) R[rd][imm] = R[r1]
+    SlOp_csetk,   // (Ku) R[rd][K[imm]] = R[r2]
 
     // Other
 
