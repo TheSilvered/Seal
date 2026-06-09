@@ -80,7 +80,7 @@ static bool resetRuntime(SlVM *vm, SlObj mainFunc, SlObj *retAddr) {
     SlCallFrame *frame = pushFrame(vm);
     if (frame == NULL) return false;
     frame->ip = NULL;
-    frame->func = mainFunc.as.func;
+    frame->func = slNewRef(mainFunc).as.func;
     frame->retAddress = retAddr;
     return true;
 }
@@ -179,7 +179,7 @@ static inline void detachShared(SlObj shared) {
 }
 
 static inline SlObj makeClosure(SlVM *vm, SlObj prototype) {
-    SlObj func = slClosureFuncNew(vm, prototype);
+    SlObj func = slClosureFuncNew(vm, slNewRef(prototype));
     if (func.type == SlObj_Null) return func;
 
     SlSharedSlot **slots = func.as.func->sharedSlots;
@@ -223,7 +223,7 @@ static bool pushFunc(SlVM *vm, uint16_t first, uint16_t paramCount) {
     SlCallFrame *frame = pushFrame(vm);
     if (frame == NULL) return false;
 
-    frame->func = func.as.func;
+    frame->func = slNewRef(func).as.func;
     frame->ip = vm->curr.ip;
     frame->stackTop = vm->curr.stack;
     frame->retAddress = &vm->curr.stack[first];
@@ -250,6 +250,7 @@ static void funcReturn(SlVM *vm, SlObj val) {
     vm->curr.stack = frame->stackTop;
 
     popSlots(vm, frame->func->proto->frameSize);
+    slDelRef((SlObj){ .type = SlObj_Func, .as.func = frame->func });
     popFrame(vm);
 
     if (vm->callStack.totalUsed > 0) {
@@ -404,11 +405,19 @@ static bool finishFunc(SlVM *vm) {
             break;
         }
         case SlOp_ldk: {
-            setSlot(vm, getrdx(op), vm->curr.consts[getimmIu(op, ex)]);
+            setSlot(
+                vm,
+                getrdx(op),
+                slNewRef(vm->curr.consts[getimmIu(op, ex)])
+            );
             break;
         }
         case SlOp_ldsh: {
-            setSlot(vm, getrdx(op), *vm->curr.shared[getimmIu(op, ex)]->value);
+            setSlot(
+                vm,
+                getrdx(op),
+                slNewRef(*vm->curr.shared[getimmIu(op, ex)]->value)
+            );
             break;
         }
         case SlOp_stsh: {
