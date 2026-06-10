@@ -41,6 +41,7 @@ typedef enum SlBinOp {
     SlBinOp_Ne
     // NOTE: do not add new operations at the end
 } SlBinOp;
+#define slBinOpTestable(op) ((op) >= SlBinOp_Lt)
 
 typedef int32_t SlNodeIdx;
 

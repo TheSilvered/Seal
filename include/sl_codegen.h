@@ -41,6 +41,9 @@ x = use arg extension
 // K = constants
 // SH = shared values
 // vals = [false, true, null]
+
+#define slOpWithImmediate(op) ((op) + 1)
+
 typedef enum SlOpCode {
     // Binary ops
 
@@ -127,8 +130,7 @@ typedef enum SlOpCode {
 
     // Other
 
-    SlOp_print,   // (O) print(S[rdx]) ; placeholder
-    SlOp_ext = 127
+    SlOp_print    // (O) print(S[rdx]) ; placeholder
 } SlOpCode;
 
 SlObj slGenCode(SlVM *vm, const SlSource *source);

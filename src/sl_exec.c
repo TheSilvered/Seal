@@ -527,8 +527,6 @@ static bool finishFunc(SlVM *vm) {
             printf("%.*s\n", (int)str.as.str->len, (char *)str.as.str->bytes);
             break;
         }
-        case SlOp_ext:
-            assert(false && "unreachable");
         }
     }
 }

@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <string.h>
 
 #include "sl_array.h"
@@ -71,7 +72,7 @@ typedef struct GenState {
 
 static bool emitA(GenState *g, SlOpCode op, uint16_t rd, uint16_t r1, uint16_t r2);
 // static bool emitKu(GenState *g, SlOpCode op, uint16_t rd, uint16_t r1, uint16_t imm);
-// static bool emitKs(GenState *g, SlOpCode op, uint16_t rd, uint16_t r1, int16_t imm);
+static bool emitKs(GenState *g, SlOpCode op, uint16_t rd, uint16_t r1, int16_t imm);
 static bool emitIu(GenState *g, SlOpCode op, uint16_t rd, uint32_t imm);
 static bool emitIs(GenState *g, SlOpCode op, uint16_t rd, int32_t imm);
 static bool emitO(GenState *g, SlOpCode op, uint16_t rd);
@@ -120,6 +121,7 @@ static bool testFalse(GenState *g, SlNodeIdx idx);
 static bool genExpr(GenState *g, SlNodeIdx idx);
 static void genLambda(GenState *g, SlNodeIdx idx, SlStrIdx name);
 static void genBinOp(GenState *g, SlNodeIdx idx);
+static void genBinOpEx(GenState *g, SlNodeIdx idx, SlOpCode op);
 static void genNumInt(GenState *g, SlNodeIdx idx);
 static void genBoolLit(GenState *g, SlNodeIdx idx);
 static void genNullLit(GenState *g, SlNodeIdx idx);
@@ -195,6 +197,7 @@ static bool emitKu(
 ) {
     return emitA(g, op, rd, r1, imm);
 }
+#endif
 
 static bool emitKs(
     GenState *g,
@@ -207,7 +210,6 @@ static bool emitKs(
         return emitA(g, op, rd, r1, (uint16_t)imm);
     }
 }
-#endif
 
 static bool emitIu(GenState *g, SlOpCode op, uint16_t rd, uint32_t imm) {
     bool extended = imm > 0xff;
@@ -596,8 +598,35 @@ static SlObj genProtoObj(GenState *g, SlNodeIdx idx, SlStrIdx name) {
     );
 }
 
-static bool genTest(GenState *g, SlNodeIdx idx, bool testFalse) {
 #define getT(test) (testFalse ? inverseTest[(test) - SlOp_teq] : (test))
+
+static bool genTestBinOp(GenState *g, SlNodeIdx idx, bool testFalse) {
+    switch (getNode(g, idx)->as.binOp.op) {
+    case SlBinOp_Lt:
+        genBinOpEx(g, idx, getT(SlOp_tlt));
+        break;
+    case SlBinOp_Le:
+        genBinOpEx(g, idx, getT(SlOp_tle));
+        break;
+    case SlBinOp_Gt:
+        genBinOpEx(g, idx, getT(SlOp_tgt));
+        break;
+    case SlBinOp_Ge:
+        genBinOpEx(g, idx, getT(SlOp_tge));
+        break;
+    case SlBinOp_Eq:
+        genBinOpEx(g, idx, getT(SlOp_teq));
+        break;
+    case SlBinOp_Ne:
+        genBinOpEx(g, idx, getT(SlOp_tne));
+        break;
+    default:
+        assert(false && "unreachable");
+    }
+    return !g->vm->error.occurred;
+}
+
+static bool genTest(GenState *g, SlNodeIdx idx, bool testFalse) {
 
     SlNode *node = getNode(g, idx);
     switch (node->kind) {
@@ -607,6 +636,11 @@ static bool genTest(GenState *g, SlNodeIdx idx, bool testFalse) {
         return testFalse ? true : emitJ(g, 1);
     case SlNode_BoolLit:
         return node->as.boolLit ^ testFalse ? true : emitJ(g, 1);
+    case SlNode_BinOp:
+        if (slBinOpTestable(node->as.binOp.op)) {
+            return genTestBinOp(g, idx, testFalse);
+        }
+        // fallthrough
     default: {
         uint16_t testSlots = getSlot(g);
         if (!genExpr(g, idx)) return false;
@@ -616,8 +650,9 @@ static bool genTest(GenState *g, SlNodeIdx idx, bool testFalse) {
     }
     }
 
-#undef getT
 }
+
+#undef getT
 
 // static bool testTrue(GenState *g, SlNodeIdx idx) {
 //     return genTest(g, idx, false);
@@ -683,56 +718,73 @@ static void genLambda(GenState *g, SlNodeIdx idx, SlStrIdx name) {
 }
 
 static void genBinOp(GenState *g, SlNodeIdx idx) {
+    switch (getNode(g, idx)->as.binOp.op) {
+    case SlBinOp_Add:
+        genBinOpEx(g, idx, SlOp_add);
+        break;
+    case SlBinOp_Sub:
+        genBinOpEx(g, idx, SlOp_sub);
+        break;
+    case SlBinOp_Mul:
+        genBinOpEx(g, idx, SlOp_mul);
+        break;
+    case SlBinOp_Div:
+        genBinOpEx(g, idx, SlOp_div);
+        break;
+    case SlBinOp_Mod:
+        genBinOpEx(g, idx, SlOp_mod);
+        break;
+    case SlBinOp_Pow:
+        genBinOpEx(g, idx, SlOp_pow);
+        break;
+    case SlBinOp_Lt:
+        genBinOpEx(g, idx, SlOp_lt);
+        break;
+    case SlBinOp_Le:
+        genBinOpEx(g, idx, SlOp_le);
+        break;
+    case SlBinOp_Gt:
+        genBinOpEx(g, idx, SlOp_gt);
+        break;
+    case SlBinOp_Ge:
+        genBinOpEx(g, idx, SlOp_ge);
+        break;
+    case SlBinOp_Eq:
+        genBinOpEx(g, idx, SlOp_eq);
+        break;
+    case SlBinOp_Ne:
+        genBinOpEx(g, idx, SlOp_ne);
+        break;
+    }
+}
+
+static void genBinOpEx(GenState *g, SlNodeIdx idx, SlOpCode op) {
+    SlNode *node = getNode(g, idx);
+    SlNode *rhsNode = getNode(g, node->as.binOp.rhs);
+    bool useImm = rhsNode->kind == SlNode_NumInt
+        && rhsNode->as.numInt >= INT16_MIN
+        && rhsNode->as.numInt <= INT16_MAX;
+
     uint16_t top = getSlot(g);
     int16_t dst = setOutRegAbs(g, -1);
-    SlNode *node = getNode(g, idx);
     if (!genExpr(g, node->as.binOp.lhs)) return;
-    int16_t lhs = setOutRegAbs(g, -1);
-    if (!genExpr(g, node->as.binOp.rhs)) return;
-    int16_t rhs = setOutRegAbs(g, dst);
+    int16_t lhsReg = setOutRegAbs(g, useImm ? dst : -1);
+    int16_t rhsVal;
+    if (useImm) {
+        rhsVal = rhsNode->as.numInt;
+    } else {
+        if (!genExpr(g, node->as.binOp.rhs)) return;
+        rhsVal = setOutRegAbs(g, dst);
+    }
 
     releaseSlots(g, top);
     g->outReg = dst;
     if (!useOutRegNew(g, idx)) return;
 
-    switch (node->as.binOp.op) {
-    case SlBinOp_Add:
-        emitA(g, SlOp_add, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Sub:
-        emitA(g, SlOp_sub, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Mul:
-        emitA(g, SlOp_mul, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Div:
-        emitA(g, SlOp_div, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Mod:
-        emitA(g, SlOp_mod, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Pow:
-        emitA(g, SlOp_pow, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Lt:
-        emitA(g, SlOp_lt, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Le:
-        emitA(g, SlOp_le, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Gt:
-        emitA(g, SlOp_gt, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Ge:
-        emitA(g, SlOp_ge, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Eq:
-        emitA(g, SlOp_eq, g->outReg, lhs, rhs);
-        break;
-    case SlBinOp_Ne:
-        emitA(g, SlOp_ne, g->outReg, lhs, rhs);
-        break;
-    }
+    if (useImm)
+        emitKs(g, slOpWithImmediate(op), g->outReg, lhsReg, rhsVal);
+    else
+        emitA(g, SlOp_add, g->outReg, lhsReg, rhsVal);
 }
 
 static void genNumInt(GenState *g, SlNodeIdx idx) {
@@ -956,7 +1008,6 @@ static void printBytecode(const uint32_t *bytecode, uint32_t len) {
         case SlOp_cseti: printf("cseti"); type = OP_KS; break;
         case SlOp_csetk: printf("csetk"); type = OP_KU; break;
         case SlOp_print: printf("print"); type = OP_O;  break;
-        case SlOp_ext: type = OP_A; break;
         }
 
         switch (type) {
